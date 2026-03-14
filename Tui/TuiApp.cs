@@ -100,25 +100,56 @@ public class MainView : Toplevel
     {
         Title = "CodeScan TUI";
 
+        // Black background + white text color scheme
+        var darkScheme = new ColorScheme
+        {
+            Normal = new Terminal.Gui.Attribute(Color.White, Color.Black),
+            Focus = new Terminal.Gui.Attribute(Color.Black, Color.BrightCyan),
+            HotNormal = new Terminal.Gui.Attribute(Color.BrightGreen, Color.Black),
+            HotFocus = new Terminal.Gui.Attribute(Color.Black, Color.BrightCyan),
+            Disabled = new Terminal.Gui.Attribute(Color.DarkGray, Color.Black)
+        };
+
+        var titleScheme = new ColorScheme
+        {
+            Normal = new Terminal.Gui.Attribute(Color.BrightYellow, Color.Black),
+            Focus = new Terminal.Gui.Attribute(Color.BrightYellow, Color.Black),
+            HotNormal = new Terminal.Gui.Attribute(Color.BrightYellow, Color.Black),
+            HotFocus = new Terminal.Gui.Attribute(Color.BrightYellow, Color.Black),
+            Disabled = new Terminal.Gui.Attribute(Color.DarkGray, Color.Black)
+        };
+
+        var hintScheme = new ColorScheme
+        {
+            Normal = new Terminal.Gui.Attribute(Color.BrightCyan, Color.Black),
+            Focus = new Terminal.Gui.Attribute(Color.BrightCyan, Color.Black),
+            HotNormal = new Terminal.Gui.Attribute(Color.BrightCyan, Color.Black),
+            HotFocus = new Terminal.Gui.Attribute(Color.BrightCyan, Color.Black),
+            Disabled = new Terminal.Gui.Attribute(Color.DarkGray, Color.Black)
+        };
+
+        ColorScheme = darkScheme;
+
         _titleLabel = new Label
         {
             Text = "Select Root",
             X = 1, Y = 0,
-            ColorScheme = Colors.ColorSchemes["Menu"]
+            ColorScheme = titleScheme
         };
 
-        _pathLabel = new Label { Text = " ", X = 1, Y = 1 };
+        _pathLabel = new Label { Text = " ", X = 1, Y = 1, ColorScheme = titleScheme };
 
         _hintLabel = new Label
         {
-            Text = "[Enter] Select  [Q] Back/Exit",
-            X = 1, Y = Pos.AnchorEnd(1)
+            Text = "[Enter] Select  [Q] Exit  [H] Home",
+            X = 1, Y = Pos.AnchorEnd(1),
+            ColorScheme = hintScheme
         };
 
         // Back button - always visible at top-right
         _btnBack = new Button
         {
-            Text = "< Back (Q)",
+            Text = "Q:Back H:Home",
             X = Pos.AnchorEnd(16),
             Y = 0,
         };
@@ -132,6 +163,17 @@ public class MainView : Toplevel
         };
         _listView.SetSource(_listItems);
         _listView.OpenSelectedItem += OnItemSelected;
+        _listView.KeyDown += (_, key) =>
+        {
+            if (key == Key.Esc) { key.Handled = true; return; }
+            if (IsQKey(key)) { key.Handled = true; HandleBack(); }
+            else if (IsHomeKey(key))
+            {
+                key.Handled = true;
+                _pathHistory.Clear();
+                ShowRootSelect();
+            }
+        };
 
         _resultView = new TextView
         {
@@ -140,6 +182,18 @@ public class MainView : Toplevel
             Height = Dim.Fill(2),
             ReadOnly = true,
             Visible = false
+        };
+        // Intercept keys in result view (ReadOnly TextView swallows keys)
+        _resultView.KeyDown += (_, key) =>
+        {
+            if (key == Key.Esc) { key.Handled = true; return; }
+            if (IsQKey(key)) { key.Handled = true; HandleBack(); }
+            else if (IsHomeKey(key) && _mode != Mode.Scanning)
+            {
+                key.Handled = true;
+                _pathHistory.Clear();
+                ShowRootSelect();
+            }
         };
 
         _chkTree = new CheckBox
@@ -198,15 +252,43 @@ public class MainView : Toplevel
         ShowRootSelect();
     }
 
+    private static bool IsQKey(Key key)
+    {
+        // Q, Shift+Q, and Korean 'ㅂ' (0x3142)
+        if (key == Key.Q || key == Key.Q.WithShift) return true;
+        if ((KeyCode)key == (KeyCode)0x3142) return true; // ㅂ
+        return false;
+    }
+
+    private static bool IsHomeKey(Key key)
+    {
+        if (key == Key.H || key == Key.H.WithShift) return true;
+        if ((KeyCode)key == (KeyCode)0x314E) return true; // ㅎ (Korean H)
+        return false;
+    }
+
     private void OnGlobalKeyDown(object? sender, Key key)
     {
-        // ignore Q when typing in a text field
+        // block ESC completely - prevent accidental exit
+        if (key == Key.Esc)
+        {
+            key.Handled = true;
+            return;
+        }
+
+        // ignore when typing in text field
         if (_txtInclude.HasFocus) return;
 
-        if (key == Key.Q || key == Key.Q.WithShift)
+        if (IsQKey(key))
         {
             key.Handled = true;
             HandleBack();
+        }
+        else if (IsHomeKey(key) && _mode != Mode.Scanning)
+        {
+            key.Handled = true;
+            _pathHistory.Clear();
+            ShowRootSelect();
         }
     }
 
@@ -412,21 +494,30 @@ public class MainView : Toplevel
             : TreeFormatter.FormatFlat(path, entries, optStats);
 
         // save log
+        string savedPath = "";
         try
         {
             var storeDir = Path.Combine(Directory.GetCurrentDirectory(), "Prompt", "TestFileDB");
             var store = new FileResultStore(storeDir);
             store.Save("tui-list", output);
+            // find the latest file
+            var latest = Directory.GetFiles(storeDir, "*.log")
+                .OrderByDescending(f => f).FirstOrDefault();
+            if (latest != null) savedPath = latest;
         }
         catch { /* log save failed, continue */ }
 
-        // show final result
+        // show final result with log path appended
+        var logInfo = string.IsNullOrEmpty(savedPath)
+            ? ""
+            : $"\n\n--- Log saved: {savedPath} ---\n";
+
         SafeInvoke(() =>
         {
-            _resultView.Text = output;
+            _resultView.Text = output + logInfo;
             _resultView.MoveHome();
             _titleLabel.Text = $"Scan Complete: {path}";
-            _hintLabel.Text = "[Q] Back to options  [Up/Down] Scroll";
+            _hintLabel.Text = "[Q] Back  [H] Home  [Up/Down] Scroll";
             _scanning = false;
             _mode = Mode.Results;
             _resultView.SetFocus();
@@ -449,7 +540,7 @@ public class MainView : Toplevel
         _mode = Mode.RootSelect;
         _titleLabel.Text = "Select Root Directory";
         _pathLabel.Text = "OS: " + (OperatingSystem.IsWindows() ? "Windows" : "Linux/macOS");
-        _hintLabel.Text = "[Enter] Select  [Q] Exit";
+        _hintLabel.Text = "[Enter] Select  [Q] Exit  [H] Home";
 
         _listItems.Clear();
         _dirEntries.Clear();
@@ -491,7 +582,7 @@ public class MainView : Toplevel
         _mode = Mode.DirBrowse;
         _titleLabel.Text = "Browse Directory";
         _pathLabel.Text = path;
-        _hintLabel.Text = "[Enter] Select/Enter  [Q] Back";
+        _hintLabel.Text = "[Enter] Select/Enter  [Q] Back  [H] Home";
 
         _listItems.Clear();
         _dirEntries.Clear();
@@ -525,9 +616,9 @@ public class MainView : Toplevel
                 _dirEntries.Add(dir);
             }
         }
-        catch (UnauthorizedAccessException)
+        catch (Exception)
         {
-            _listItems.Add("  (access denied)");
+            _listItems.Add("  (access denied - skipped)");
             _dirEntries.Add("__SEP__");
         }
 
@@ -542,7 +633,7 @@ public class MainView : Toplevel
         _mode = Mode.ScanOptions;
         _titleLabel.Text = "Scan Options";
         _pathLabel.Text = $"Target: {_currentPath}";
-        _hintLabel.Text = "[Tab] Navigate  [Enter] Run Scan  [Q] Back";
+        _hintLabel.Text = "[Tab] Navigate  [Enter] Run Scan  [Q] Back  [H] Home";
 
         _listView.Visible = false;
         _resultView.Visible = false;

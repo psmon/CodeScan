@@ -55,7 +55,7 @@ public sealed class DirectoryScanner
             dirs = Directory.GetDirectories(currentPath);
             files = Directory.GetFiles(currentPath);
         }
-        catch (UnauthorizedAccessException)
+        catch (Exception) // UnauthorizedAccess, IO, Security etc.
         {
             return;
         }

@@ -75,7 +75,11 @@ public sealed class GitBlameService
             if (proc == null) return null;
 
             var output = proc.StandardOutput.ReadToEnd();
-            proc.WaitForExit(10000);
+            if (!proc.WaitForExit(5000))
+            {
+                try { proc.Kill(); } catch { }
+                return null;
+            }
 
             if (proc.ExitCode != 0)
                 return null;
@@ -187,31 +191,20 @@ public sealed class GitBlameService
 
     private static string FindGitRoot(string path)
     {
-        try
+        // Quick check: walk up looking for .git directory first (no process needed)
+        var dir = path;
+        while (!string.IsNullOrEmpty(dir))
         {
-            var psi = new ProcessStartInfo
+            if (Directory.Exists(Path.Combine(dir, ".git")))
             {
-                FileName = "git",
-                Arguments = "rev-parse --show-toplevel",
-                WorkingDirectory = path,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-
-            using var proc = Process.Start(psi);
-            if (proc == null) return "";
-
-            var result = proc.StandardOutput.ReadLine()?.Trim() ?? "";
-            proc.WaitForExit(5000);
-
-            return proc.ExitCode == 0 ? result : "";
+                return dir; // found git repo
+            }
+            var parent = Directory.GetParent(dir)?.FullName;
+            if (parent == dir) break;
+            dir = parent;
         }
-        catch
-        {
-            return "";
-        }
+        // No .git directory found — not a git repo, skip entirely
+        return "";
     }
 
     private sealed class BlameLine
