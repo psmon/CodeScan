@@ -60,8 +60,9 @@ public sealed class DirectoryScanner
             return;
         }
 
-        Array.Sort(dirs, StringComparer.OrdinalIgnoreCase);
-        Array.Sort(files, StringComparer.OrdinalIgnoreCase);
+        // Sort by most recently modified first
+        Array.Sort(dirs, (a, b) => SafeGetWriteTime(b).CompareTo(SafeGetWriteTime(a)));
+        Array.Sort(files, (a, b) => SafeGetWriteTime(b).CompareTo(SafeGetWriteTime(a)));
 
         foreach (var dir in dirs)
         {
@@ -217,6 +218,12 @@ public sealed class DirectoryScanner
             pIdx++;
 
         return pIdx == pattern.Length;
+    }
+
+    private static DateTime SafeGetWriteTime(string path)
+    {
+        try { return File.GetLastWriteTimeUtc(path); }
+        catch { return DateTime.MinValue; }
     }
 
     private static string NormalizeExt(string ext)

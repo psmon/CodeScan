@@ -34,14 +34,31 @@ public class TuiApp
         }
     }
 
+    // Windows Console: set code page to UTF-8
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetConsoleOutputCP(uint wCodePageID);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetConsoleCP(uint wCodePageID);
+
     public void Run()
     {
         try
         {
+            // Force UTF-8 encoding for Korean/CJK support
+            Console.OutputEncoding = System.Text.Encoding.UTF8;
+            Console.InputEncoding = System.Text.Encoding.UTF8;
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                SetConsoleOutputCP(65001); // UTF-8
+                SetConsoleCP(65001);
+            }
+
             DisableConsoleMouse();
+            Application.ForceDriver = "NetDriver";
             Application.Init();
             Application.IsMouseDisabled = true;
-            DisableConsoleMouse(); // re-apply after Init (it may reset console mode)
+            DisableConsoleMouse();
 
             var main = new MainView();
             Application.Run(main);
@@ -64,7 +81,7 @@ public class TuiApp
 
 public class MainView : Toplevel
 {
-    private enum Mode { RootSelect, DirBrowse, ScanOptions, Scanning, Results }
+    private enum Mode { RootSelect, DirBrowse, ScanOptions, Scanning, Results, Projects, SearchInput, SearchResults }
 
     private Mode _mode = Mode.RootSelect;
     private string _currentPath = "";
@@ -92,6 +109,11 @@ public class MainView : Toplevel
     private readonly TextField _txtInclude;
     private readonly Button _btnExecute;
     private readonly Label _lblInclude;
+
+    // search controls
+    private readonly Label _lblSearch;
+    private readonly TextField _txtSearch;
+    private readonly Button _btnSearch;
 
     private ObservableCollection<string> _listItems = [];
     private List<string> _dirEntries = [];
@@ -163,17 +185,6 @@ public class MainView : Toplevel
         };
         _listView.SetSource(_listItems);
         _listView.OpenSelectedItem += OnItemSelected;
-        _listView.KeyDown += (_, key) =>
-        {
-            if (key == Key.Esc) { key.Handled = true; return; }
-            if (IsQKey(key)) { key.Handled = true; HandleBack(); }
-            else if (IsHomeKey(key))
-            {
-                key.Handled = true;
-                _pathHistory.Clear();
-                ShowRootSelect();
-            }
-        };
 
         _resultView = new TextView
         {
@@ -182,18 +193,6 @@ public class MainView : Toplevel
             Height = Dim.Fill(2),
             ReadOnly = true,
             Visible = false
-        };
-        // Intercept keys in result view (ReadOnly TextView swallows keys)
-        _resultView.KeyDown += (_, key) =>
-        {
-            if (key == Key.Esc) { key.Handled = true; return; }
-            if (IsQKey(key)) { key.Handled = true; HandleBack(); }
-            else if (IsHomeKey(key) && _mode != Mode.Scanning)
-            {
-                key.Handled = true;
-                _pathHistory.Clear();
-                ShowRootSelect();
-            }
         };
 
         _chkTree = new CheckBox
@@ -243,11 +242,34 @@ public class MainView : Toplevel
         };
         _btnExecute.Accepting += OnExecuteScan;
 
-        Add(_titleLabel, _pathLabel, _hintLabel, _btnBack, _listView, _resultView,
-            _chkTree, _chkDetail, _chkStats, _lblInclude, _txtInclude, _btnExecute);
+        // Search UI (hidden by default)
+        _lblSearch = new Label
+        {
+            Text = "Search query:",
+            X = 3, Y = 4,
+            Visible = false
+        };
+        _txtSearch = new TextField
+        {
+            Text = " ",
+            X = 3, Y = 5,
+            Width = 50,
+            Visible = false
+        };
+        _btnSearch = new Button
+        {
+            Text = ">>> Search <<<",
+            X = 3, Y = 7,
+            Visible = false
+        };
+        _btnSearch.Accepting += OnExecuteSearch;
 
-        // Q key = back (only when not typing in TextField)
-        KeyDown += OnGlobalKeyDown;
+        Add(_titleLabel, _pathLabel, _hintLabel, _btnBack, _listView, _resultView,
+            _chkTree, _chkDetail, _chkStats, _lblInclude, _txtInclude, _btnExecute,
+            _lblSearch, _txtSearch, _btnSearch);
+
+        // Application-level key intercept - fires BEFORE any view processes keys
+        Application.KeyDown += OnGlobalKeyDown;
 
         ShowRootSelect();
     }
@@ -277,7 +299,7 @@ public class MainView : Toplevel
         }
 
         // ignore when typing in text field
-        if (_txtInclude.HasFocus) return;
+        if (_txtInclude.HasFocus || _txtSearch.HasFocus) return;
 
         if (IsQKey(key))
         {
@@ -322,6 +344,15 @@ public class MainView : Toplevel
             case Mode.Results:
                 ShowScanOptions();
                 break;
+
+            case Mode.SearchInput:
+            case Mode.Projects:
+                ShowRootSelect();
+                break;
+
+            case Mode.SearchResults:
+                ShowSearchInput();
+                break;
         }
     }
 
@@ -335,6 +366,8 @@ public class MainView : Toplevel
         if (_mode == Mode.RootSelect)
         {
             if (selected is "__EXIT__") { Application.RequestStop(); return; }
+            if (selected is "__SEARCH__") { ShowSearchInput(); return; }
+            if (selected is "__PROJECTS__") { ShowProjects(); return; }
             _pathHistory.Clear();
             _currentPath = selected;
             ShowDirBrowse(_currentPath);
@@ -356,6 +389,16 @@ public class MainView : Toplevel
             if (Directory.Exists(selected))
             {
                 _pathHistory.Push(_currentPath);
+                _currentPath = selected;
+                ShowDirBrowse(_currentPath);
+            }
+        }
+        else if (_mode == Mode.Projects)
+        {
+            if (selected is "__HOME__") { ShowRootSelect(); return; }
+            if (Directory.Exists(selected))
+            {
+                _pathHistory.Clear();
                 _currentPath = selected;
                 ShowDirBrowse(_currentPath);
             }
@@ -469,6 +512,7 @@ public class MainView : Toplevel
 
                 var file = sourceFiles[i];
                 file.Methods = SourceAnalyzer.ExtractMethods(file.FullPath);
+                    file.Comments = CommentExtractor.Extract(file.FullPath);
                 if (gitBlame.IsAvailable && file.Methods.Count > 0)
                     gitBlame.EnrichWithBlame(file.FullPath, file.Methods);
 
@@ -493,28 +537,45 @@ public class MainView : Toplevel
             ? TreeFormatter.Format(path, entries, optStats)
             : TreeFormatter.FormatFlat(path, entries, optStats);
 
-        // save log
-        string savedPath = "";
+        // Save to DB + file log
+        string savedInfo = "";
         try
         {
+            var dbPath = Path.Combine(Directory.GetCurrentDirectory(), "codescan.db");
+            using var db = new SqliteStore(dbPath);
+            var projectId = db.UpsertProject(Path.GetFullPath(path));
+            var scanId = db.InsertScan(projectId, entries);
+
+            var docPath = ProjectDocFinder.FindDoc(path);
+            if (docPath != null)
+            {
+                try
+                {
+                    var docText = File.ReadAllText(docPath);
+                    db.InsertProjectDoc(scanId, Path.GetRelativePath(path, docPath), docText);
+                }
+                catch { }
+            }
+
+            var methodCount = entries.SelectMany(e => e.Methods).Count();
+            var fileCountFinal = entries.Count(e => !e.IsDirectory);
+            savedInfo = $"\n\n--- DB: {fileCountFinal} files, {methodCount} methods indexed ---\n";
+
+            // Also save file log
+            var docContent = ProjectDocFinder.ReadDoc(path);
+            var logOutput = docContent != null ? output + docContent : output;
             var storeDir = Path.Combine(Directory.GetCurrentDirectory(), "Prompt", "TestFileDB");
             var store = new FileResultStore(storeDir);
-            store.Save("tui-list", output);
-            // find the latest file
+            store.Save("tui-list", logOutput);
             var latest = Directory.GetFiles(storeDir, "*.log")
                 .OrderByDescending(f => f).FirstOrDefault();
-            if (latest != null) savedPath = latest;
+            if (latest != null) savedInfo += $"--- Log: {latest} ---\n";
         }
-        catch { /* log save failed, continue */ }
-
-        // show final result with log path appended
-        var logInfo = string.IsNullOrEmpty(savedPath)
-            ? ""
-            : $"\n\n--- Log saved: {savedPath} ---\n";
+        catch (Exception ex) { savedInfo = $"\n\n--- Save error: {ex.Message} ---\n"; }
 
         SafeInvoke(() =>
         {
-            _resultView.Text = output + logInfo;
+            _resultView.Text = output + savedInfo;
             _resultView.MoveHome();
             _titleLabel.Text = $"Scan Complete: {path}";
             _hintLabel.Text = "[Q] Back  [H] Home  [Up/Down] Scroll";
@@ -533,6 +594,186 @@ public class MainView : Toplevel
             _titleLabel.Text = "Scan Cancelled";
             _hintLabel.Text = "[Q] Back to options";
         });
+    }
+
+    // ========================
+    // Search
+    // ========================
+    private void ShowSearchInput()
+    {
+        _mode = Mode.SearchInput;
+        _titleLabel.Text = "Search Indexed Data";
+        _pathLabel.Text = "Search methods, files, and docs by keyword";
+        _hintLabel.Text = "[Enter] Search  [Q] Back  [H] Home";
+
+        _listView.Visible = false;
+        _resultView.Visible = false;
+        HideOptions();
+
+        _lblSearch.Visible = true;
+        _txtSearch.Visible = true;
+        _btnSearch.Visible = true;
+
+        _txtSearch.Text = " ";
+        _txtSearch.SetFocus();
+    }
+
+    private void OnExecuteSearch(object? sender, CommandEventArgs e)
+    {
+        var query = _txtSearch.Text?.ToString()?.Trim() ?? "";
+        if (string.IsNullOrEmpty(query)) return;
+
+        _lblSearch.Visible = false;
+        _txtSearch.Visible = false;
+        _btnSearch.Visible = false;
+
+        try
+        {
+            var dbPath = Path.Combine(Directory.GetCurrentDirectory(), "codescan.db");
+            if (!File.Exists(dbPath))
+            {
+                ShowSearchResults("No database found. Run 'list --detail' first to index a project.", query);
+                return;
+            }
+
+            using var db = new SqliteStore(dbPath);
+            var dbResults = db.Search(query, null, 50);
+            var gitResults = GitLogSearchService.Search(query, 10);
+
+            if (dbResults.Count == 0 && gitResults.Count == 0)
+            {
+                ShowSearchResults($"No results for: {query}", query);
+                return;
+            }
+
+            var sb = new System.Text.StringBuilder();
+
+            if (dbResults.Count > 0)
+            {
+                sb.AppendLine($"=== DB Index ({dbResults.Count} results) ===\n");
+                FormatResults(sb, dbResults);
+            }
+
+            if (gitResults.Count > 0)
+            {
+                sb.AppendLine($"=== Git Log ({gitResults.Count} results) ===\n");
+                FormatResults(sb, gitResults);
+            }
+
+            ShowSearchResults(sb.ToString(), query);
+        }
+        catch (Exception ex)
+        {
+            ShowSearchResults($"Search error: {ex.Message}", query);
+        }
+    }
+
+    private static void FormatResults(System.Text.StringBuilder sb, List<SearchResult> results)
+    {
+        foreach (var r in results)
+        {
+            var typeTag = r.Type switch
+            {
+                "method" => "[METHOD]",
+                "file"   => "[FILE]  ",
+                "doc"    => "[DOC]   ",
+                "commit"  => "[COMMIT]",
+                "comment" => "[COMMENT]",
+                _ => $"[{r.Type.ToUpper()}]"
+            };
+            sb.AppendLine($"  {typeTag} {r.Name}");
+            if (!string.IsNullOrEmpty(r.Path))
+                sb.AppendLine($"           {r.Path}");
+            if (!string.IsNullOrEmpty(r.Excerpt))
+                sb.AppendLine($"           {r.Excerpt}");
+            sb.AppendLine();
+        }
+    }
+
+    private void ShowSearchResults(string content, string query)
+    {
+        _mode = Mode.SearchResults;
+        _titleLabel.Text = $"Search Results: {query}";
+        _hintLabel.Text = "[Q] Back to search  [H] Home  [Up/Down] Scroll";
+
+        _listView.Visible = false;
+        HideOptions();
+
+        _resultView.Text = content;
+        _resultView.Visible = true;
+        _resultView.MoveHome();
+        _resultView.SetFocus();
+    }
+
+    // ========================
+    // Projects
+    // ========================
+    private void ShowProjects()
+    {
+        _mode = Mode.Projects;
+        _titleLabel.Text = "Indexed Projects";
+        _pathLabel.Text = "Projects that have been scanned and indexed";
+        _hintLabel.Text = "[Enter] Re-scan  [Q] Back  [H] Home";
+
+        try
+        {
+            var dbPath = Path.Combine(Directory.GetCurrentDirectory(), "codescan.db");
+            if (!File.Exists(dbPath))
+            {
+                _listItems.Clear();
+                _dirEntries.Clear();
+                _listItems.Add("  No database found. Run 'list --detail' first.");
+                _dirEntries.Add("__SEP__");
+                ShowListMode();
+                _listView.SetSource(_listItems);
+                _listView.SetFocus();
+                return;
+            }
+
+            using var db = new SqliteStore(dbPath);
+            var projects = db.GetProjects();
+
+            _listItems.Clear();
+            _dirEntries.Clear();
+
+            if (projects.Count == 0)
+            {
+                _listItems.Add("  No indexed projects yet.");
+                _dirEntries.Add("__SEP__");
+            }
+            else
+            {
+                foreach (var p in projects)
+                {
+                    var size = FormatSize(p.TotalSize);
+                    var lastScan = p.LastScannedAt ?? "(never)";
+                    _listItems.Add($"  {p.RootPath}");
+                    _dirEntries.Add(p.RootPath);
+                    _listItems.Add($"    Files: {p.FileCount}  Dirs: {p.DirCount}  Size: {size}  Last: {lastScan}");
+                    _dirEntries.Add("__SEP__");
+                }
+            }
+
+            _listItems.Add("  ----------------");
+            _dirEntries.Add("__SEP__");
+            _listItems.Add("  [Back to Home]");
+            _dirEntries.Add("__HOME__");
+
+            ShowListMode();
+            _listView.SetSource(_listItems);
+            _listView.SelectedItem = 0;
+            _listView.SetFocus();
+        }
+        catch (Exception ex)
+        {
+            _listItems.Clear();
+            _dirEntries.Clear();
+            _listItems.Add($"  Error: {ex.Message}");
+            _dirEntries.Add("__SEP__");
+            ShowListMode();
+            _listView.SetSource(_listItems);
+            _listView.SetFocus();
+        }
     }
 
     private void ShowRootSelect()
@@ -568,6 +809,12 @@ public class MainView : Toplevel
 
         _listItems.Add("  ----------------");
         _dirEntries.Add("__SEP__");
+        _listItems.Add("  [Search] Search indexed methods, files, docs");
+        _dirEntries.Add("__SEARCH__");
+        _listItems.Add("  [Projects] View indexed projects");
+        _dirEntries.Add("__PROJECTS__");
+        _listItems.Add("  ----------------");
+        _dirEntries.Add("__SEP__");
         _listItems.Add("  [Exit]");
         _dirEntries.Add("__EXIT__");
 
@@ -600,7 +847,7 @@ public class MainView : Toplevel
         try
         {
             var dirs = Directory.GetDirectories(path)
-                .OrderBy(d => Path.GetFileName(d), StringComparer.OrdinalIgnoreCase)
+                .OrderByDescending(d => SafeGetWriteTime(d))
                 .ToArray();
 
             foreach (var dir in dirs)
@@ -663,6 +910,9 @@ public class MainView : Toplevel
         _lblInclude.Visible = false;
         _txtInclude.Visible = false;
         _btnExecute.Visible = false;
+        _lblSearch.Visible = false;
+        _txtSearch.Visible = false;
+        _btnSearch.Visible = false;
     }
 
     private static bool IsDefaultExcluded(string dirName)
@@ -675,6 +925,12 @@ public class MainView : Toplevel
     {
         try { return Directory.GetFiles(dir).Length; }
         catch { return 0; }
+    }
+
+    private static DateTime SafeGetWriteTime(string path)
+    {
+        try { return File.GetLastWriteTimeUtc(path); }
+        catch { return DateTime.MinValue; }
     }
 
     private static string FormatSize(long bytes) => bytes switch

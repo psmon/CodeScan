@@ -10,4 +10,5 @@ public sealed class FileEntry
     public required int Depth { get; init; }
     public string Extension => Path.GetExtension(Name).ToLowerInvariant();
     public List<MethodEntry> Methods { get; set; } = [];
+    public List<CommentBlock> Comments { get; set; } = [];
 }

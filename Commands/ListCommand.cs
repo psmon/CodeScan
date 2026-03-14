@@ -5,10 +5,12 @@ namespace CodeScan.Commands;
 public sealed class ListCommand
 {
     private readonly IResultStore? _store;
+    private readonly SqliteStore? _db;
 
-    public ListCommand(IResultStore? store = null)
+    public ListCommand(IResultStore? store = null, SqliteStore? db = null)
     {
         _store = store;
+        _db = db;
     }
 
     public int Execute(string path, ListOptions options)
@@ -23,7 +25,6 @@ public sealed class ListCommand
 
             var entries = scanner.Scan(path);
 
-            // --detail: 소스 파일에서 클래스:함수 추출 + git blame
             if (options.Detail)
             {
                 var gitBlame = new GitBlameService(path);
@@ -40,6 +41,7 @@ public sealed class ListCommand
                         Console.Error.Write($"\rAnalyzing... {count}/{total} {file.Name}                ");
 
                     file.Methods = SourceAnalyzer.ExtractMethods(file.FullPath);
+                    file.Comments = CommentExtractor.Extract(file.FullPath);
 
                     if (gitBlame.IsAvailable && file.Methods.Count > 0)
                         gitBlame.EnrichWithBlame(file.FullPath, file.Methods);
@@ -55,7 +57,34 @@ public sealed class ListCommand
 
             Console.Write(output);
 
-            _store?.Save("list", output);
+            // Save to DB (always)
+            if (_db != null)
+            {
+                var projectId = _db.UpsertProject(Path.GetFullPath(path));
+                var scanId = _db.InsertScan(projectId, entries);
+
+                var docPath = ProjectDocFinder.FindDoc(path);
+                if (docPath != null)
+                {
+                    try
+                    {
+                        var docContent = File.ReadAllText(docPath);
+                        _db.InsertProjectDoc(scanId, Path.GetRelativePath(path, docPath), docContent);
+                    }
+                    catch { }
+                }
+
+                Console.Error.WriteLine($"[db] Indexed: {entries.Count(e => !e.IsDirectory)} files, " +
+                    $"{entries.SelectMany(e => e.Methods).Count()} methods");
+            }
+
+            // DevMode file log
+            if (_store != null)
+            {
+                var docContent = ProjectDocFinder.ReadDoc(path);
+                var logOutput = docContent != null ? output + docContent : output;
+                _store.Save("list", logOutput);
+            }
 
             return 0;
         }

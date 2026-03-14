@@ -67,6 +67,7 @@ public sealed class GitBlameService
                 WorkingDirectory = _repoRoot,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
+                StandardOutputEncoding = System.Text.Encoding.UTF8,
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
