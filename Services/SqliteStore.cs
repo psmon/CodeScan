@@ -290,6 +290,175 @@ public sealed class SqliteStore : IResultStore, IDisposable
     }
 
     // ========================
+    // Project detail queries (latest scan)
+    // ========================
+    private long GetLatestScanId(long projectId)
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = "SELECT MAX(id) FROM scans WHERE project_id = @pid";
+        cmd.Parameters.AddWithValue("@pid", projectId);
+        var result = cmd.ExecuteScalar();
+        return result is long v ? v : 0;
+    }
+
+    public List<ProjectFileInfo> GetProjectFiles(long projectId)
+    {
+        var list = new List<ProjectFileInfo>();
+        var scanId = GetLatestScanId(projectId);
+        if (scanId == 0) return list;
+
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT f.id, f.relative_path, f.name, f.extension, f.size, f.is_directory, f.depth
+            FROM files f
+            WHERE f.scan_id = @sid AND f.is_directory = 0
+            ORDER BY f.relative_path
+            """;
+        cmd.Parameters.AddWithValue("@sid", scanId);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            list.Add(new ProjectFileInfo
+            {
+                Id = reader.GetInt64(0),
+                RelativePath = reader.GetString(1),
+                Name = reader.GetString(2),
+                Extension = reader.IsDBNull(3) ? "" : reader.GetString(3),
+                Size = reader.IsDBNull(4) ? 0 : reader.GetInt64(4),
+                Depth = reader.IsDBNull(6) ? 0 : reader.GetInt32(6)
+            });
+        }
+        return list;
+    }
+
+    public List<ProjectMethodInfo> GetProjectMethods(long projectId)
+    {
+        var list = new List<ProjectMethodInfo>();
+        var scanId = GetLatestScanId(projectId);
+        if (scanId == 0) return list;
+
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT m.class_name, m.method_name, m.start_line, m.end_line,
+                   m.last_author, m.last_date, m.commit_summary, f.relative_path
+            FROM methods m
+            JOIN files f ON m.file_id = f.id
+            WHERE f.scan_id = @sid
+            ORDER BY f.relative_path, m.start_line
+            """;
+        cmd.Parameters.AddWithValue("@sid", scanId);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            list.Add(new ProjectMethodInfo
+            {
+                ClassName = reader.IsDBNull(0) ? "" : reader.GetString(0),
+                MethodName = reader.GetString(1),
+                StartLine = reader.IsDBNull(2) ? 0 : reader.GetInt32(2),
+                EndLine = reader.IsDBNull(3) ? 0 : reader.GetInt32(3),
+                LastAuthor = reader.IsDBNull(4) ? null : reader.GetString(4),
+                LastDate = reader.IsDBNull(5) ? null : reader.GetString(5),
+                CommitSummary = reader.IsDBNull(6) ? null : reader.GetString(6),
+                FilePath = reader.GetString(7)
+            });
+        }
+        return list;
+    }
+
+    public List<ProjectCommentInfo> GetProjectComments(long projectId)
+    {
+        var list = new List<ProjectCommentInfo>();
+        var scanId = GetLatestScanId(projectId);
+        if (scanId == 0) return list;
+
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT c.comment, c.nearby_code, c.start_line, c.end_line, f.relative_path
+            FROM comments c
+            JOIN files f ON c.file_id = f.id
+            WHERE f.scan_id = @sid
+            ORDER BY f.relative_path, c.start_line
+            """;
+        cmd.Parameters.AddWithValue("@sid", scanId);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            list.Add(new ProjectCommentInfo
+            {
+                Comment = reader.GetString(0),
+                NearbyCode = reader.IsDBNull(1) ? "" : reader.GetString(1),
+                StartLine = reader.IsDBNull(2) ? 0 : reader.GetInt32(2),
+                EndLine = reader.IsDBNull(3) ? 0 : reader.GetInt32(3),
+                FilePath = reader.GetString(4)
+            });
+        }
+        return list;
+    }
+
+    public List<ProjectDocContent> GetProjectDocContents(long projectId)
+    {
+        var list = new List<ProjectDocContent>();
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT pd.doc_path, pd.content FROM project_docs pd
+            JOIN scans s ON pd.scan_id = s.id
+            WHERE s.project_id = @pid
+            AND s.id = (SELECT MAX(id) FROM scans WHERE project_id = @pid)
+            ORDER BY pd.doc_path
+            """;
+        cmd.Parameters.AddWithValue("@pid", projectId);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            list.Add(new ProjectDocContent
+            {
+                DocPath = reader.GetString(0),
+                Content = reader.IsDBNull(1) ? "" : reader.GetString(1)
+            });
+        }
+        return list;
+    }
+
+    public List<string> GetProjectExtensions(long projectId)
+    {
+        var list = new List<string>();
+        var scanId = GetLatestScanId(projectId);
+        if (scanId == 0) return list;
+
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT extension, COUNT(*) as cnt
+            FROM files WHERE scan_id = @sid AND is_directory = 0 AND extension != ''
+            GROUP BY extension ORDER BY cnt DESC
+            """;
+        cmd.Parameters.AddWithValue("@sid", scanId);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            list.Add($"{reader.GetString(0)} ({reader.GetInt32(1)})");
+        return list;
+    }
+
+    public List<string> GetProjectAuthors(long projectId)
+    {
+        var list = new List<string>();
+        var scanId = GetLatestScanId(projectId);
+        if (scanId == 0) return list;
+
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT m.last_author, COUNT(*) as cnt
+            FROM methods m JOIN files f ON m.file_id = f.id
+            WHERE f.scan_id = @sid AND m.last_author IS NOT NULL
+            GROUP BY m.last_author ORDER BY cnt DESC
+            """;
+        cmd.Parameters.AddWithValue("@sid", scanId);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            list.Add($"{reader.GetString(0)} ({reader.GetInt32(1)} methods)");
+        return list;
+    }
+
+    // ========================
     // Scan storage
     // ========================
     public long InsertScan(long projectId, List<FileEntry> entries)
@@ -573,4 +742,41 @@ public sealed class SearchResult
     public string Excerpt { get; init; } = "";
     public string Path { get; init; } = "";
     public long ScanId { get; init; }
+}
+
+public sealed class ProjectFileInfo
+{
+    public long Id { get; init; }
+    public required string RelativePath { get; init; }
+    public required string Name { get; init; }
+    public string Extension { get; init; } = "";
+    public long Size { get; init; }
+    public int Depth { get; init; }
+}
+
+public sealed class ProjectMethodInfo
+{
+    public string ClassName { get; init; } = "";
+    public required string MethodName { get; init; }
+    public int StartLine { get; init; }
+    public int EndLine { get; init; }
+    public string? LastAuthor { get; init; }
+    public string? LastDate { get; init; }
+    public string? CommitSummary { get; init; }
+    public required string FilePath { get; init; }
+}
+
+public sealed class ProjectCommentInfo
+{
+    public required string Comment { get; init; }
+    public string NearbyCode { get; init; } = "";
+    public int StartLine { get; init; }
+    public int EndLine { get; init; }
+    public required string FilePath { get; init; }
+}
+
+public sealed class ProjectDocContent
+{
+    public required string DocPath { get; init; }
+    public required string Content { get; init; }
 }
