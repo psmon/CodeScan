@@ -35,3 +35,4 @@ packages/
 .DS_Store
 Thumbs.db
 /Prompt/TestFileDB
+codescan.db

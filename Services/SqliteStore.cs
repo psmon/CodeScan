@@ -9,7 +9,7 @@ public sealed class SqliteStore : IResultStore, IDisposable
 
     public SqliteStore(string? dbPath = null)
     {
-        dbPath ??= Path.Combine(AppContext.BaseDirectory, "codescan.db");
+        dbPath ??= AppPaths.DbPath;
         var dir = Path.GetDirectoryName(dbPath);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
 
@@ -28,7 +28,8 @@ public sealed class SqliteStore : IResultStore, IDisposable
                 last_scanned_at TEXT,
                 file_count INTEGER DEFAULT 0,
                 dir_count INTEGER DEFAULT 0,
-                total_size INTEGER DEFAULT 0
+                total_size INTEGER DEFAULT 0,
+                addinfo TEXT
             );
 
             CREATE TABLE IF NOT EXISTS scans (
@@ -89,6 +90,14 @@ public sealed class SqliteStore : IResultStore, IDisposable
             """;
         cmd.ExecuteNonQuery();
 
+        // Migration: add addinfo column if missing (existing DBs)
+        try
+        {
+            cmd.CommandText = "ALTER TABLE projects ADD COLUMN addinfo TEXT";
+            cmd.ExecuteNonQuery();
+        }
+        catch { /* column already exists */ }
+
         // FTS5 for full-text search (trigram tokenizer for Korean substring matching)
         try
         {
@@ -121,11 +130,7 @@ public sealed class SqliteStore : IResultStore, IDisposable
     // ========================
     public void Save(string command, string content)
     {
-        // Also save as file for backward compat
-        var baseDir = Path.Combine(
-            Path.GetDirectoryName(_conn.DataSource) ?? Directory.GetCurrentDirectory(),
-            "TestFileDB");
-        Directory.CreateDirectory(baseDir);
+        var baseDir = AppPaths.GetLogDir();
         var ts = DateTime.Now.ToString("yyyy-MM-dd_HHmmss");
         var filePath = Path.Combine(baseDir, $"{ts}_{command}.log");
         File.WriteAllText(filePath, content);
@@ -164,7 +169,7 @@ public sealed class SqliteStore : IResultStore, IDisposable
     {
         var list = new List<ProjectInfo>();
         using var cmd = _conn.CreateCommand();
-        cmd.CommandText = "SELECT id, root_path, last_scanned_at, file_count, dir_count, total_size FROM projects ORDER BY last_scanned_at DESC";
+        cmd.CommandText = "SELECT id, root_path, last_scanned_at, file_count, dir_count, total_size, addinfo FROM projects ORDER BY last_scanned_at DESC";
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
         {
@@ -175,10 +180,113 @@ public sealed class SqliteStore : IResultStore, IDisposable
                 LastScannedAt = reader.IsDBNull(2) ? null : reader.GetString(2),
                 FileCount = reader.IsDBNull(3) ? 0 : reader.GetInt32(3),
                 DirCount = reader.IsDBNull(4) ? 0 : reader.GetInt32(4),
-                TotalSize = reader.IsDBNull(5) ? 0 : reader.GetInt64(5)
+                TotalSize = reader.IsDBNull(5) ? 0 : reader.GetInt64(5),
+                AddInfo = reader.IsDBNull(6) ? null : reader.GetString(6)
             });
         }
         return list;
+    }
+
+    public ProjectInfo? GetProject(long projectId)
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = "SELECT id, root_path, last_scanned_at, file_count, dir_count, total_size, addinfo FROM projects WHERE id = @id";
+        cmd.Parameters.AddWithValue("@id", projectId);
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read()) return null;
+
+        return new ProjectInfo
+        {
+            Id = reader.GetInt64(0),
+            RootPath = reader.GetString(1),
+            LastScannedAt = reader.IsDBNull(2) ? null : reader.GetString(2),
+            FileCount = reader.IsDBNull(3) ? 0 : reader.GetInt32(3),
+            DirCount = reader.IsDBNull(4) ? 0 : reader.GetInt32(4),
+            TotalSize = reader.IsDBNull(5) ? 0 : reader.GetInt64(5),
+            AddInfo = reader.IsDBNull(6) ? null : reader.GetString(6)
+        };
+    }
+
+    public void SetProjectAddInfo(long projectId, string info)
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = "UPDATE projects SET addinfo = @info WHERE id = @id";
+        cmd.Parameters.AddWithValue("@info", info);
+        cmd.Parameters.AddWithValue("@id", projectId);
+        cmd.ExecuteNonQuery();
+    }
+
+    public List<ScanInfo> GetProjectScans(long projectId, int limit = 10)
+    {
+        var list = new List<ScanInfo>();
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT id, scanned_at, file_count, dir_count, total_size
+            FROM scans WHERE project_id = @pid
+            ORDER BY scanned_at DESC LIMIT @lim
+            """;
+        cmd.Parameters.AddWithValue("@pid", projectId);
+        cmd.Parameters.AddWithValue("@lim", limit);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            list.Add(new ScanInfo
+            {
+                Id = reader.GetInt64(0),
+                ScannedAt = reader.GetString(1),
+                FileCount = reader.IsDBNull(2) ? 0 : reader.GetInt32(2),
+                DirCount = reader.IsDBNull(3) ? 0 : reader.GetInt32(3),
+                TotalSize = reader.IsDBNull(4) ? 0 : reader.GetInt64(4)
+            });
+        }
+        return list;
+    }
+
+    public int GetProjectMethodCount(long projectId)
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT COUNT(*) FROM methods m
+            JOIN files f ON m.file_id = f.id
+            JOIN scans s ON f.scan_id = s.id
+            WHERE s.project_id = @pid
+            AND s.id = (SELECT MAX(id) FROM scans WHERE project_id = @pid)
+            """;
+        cmd.Parameters.AddWithValue("@pid", projectId);
+        var result = cmd.ExecuteScalar();
+        return result is long v ? (int)v : 0;
+    }
+
+    public int GetProjectCommentCount(long projectId)
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT COUNT(*) FROM comments c
+            JOIN files f ON c.file_id = f.id
+            JOIN scans s ON f.scan_id = s.id
+            WHERE s.project_id = @pid
+            AND s.id = (SELECT MAX(id) FROM scans WHERE project_id = @pid)
+            """;
+        cmd.Parameters.AddWithValue("@pid", projectId);
+        var result = cmd.ExecuteScalar();
+        return result is long v ? (int)v : 0;
+    }
+
+    public List<string> GetProjectDocs(long projectId)
+    {
+        var docs = new List<string>();
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT pd.doc_path FROM project_docs pd
+            JOIN scans s ON pd.scan_id = s.id
+            WHERE s.project_id = @pid
+            ORDER BY pd.doc_path
+            """;
+        cmd.Parameters.AddWithValue("@pid", projectId);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            docs.Add(reader.GetString(0));
+        return docs;
     }
 
     // ========================
@@ -303,26 +411,29 @@ public sealed class SqliteStore : IResultStore, IDisposable
     // ========================
     // Search
     // ========================
-    public List<SearchResult> Search(string query, string? type = null, int limit = 30)
+    public List<SearchResult> Search(string query, string? type = null, int limit = 30, long? projectId = null)
     {
         // Try FTS5 first, fallback to LIKE for short queries (< 3 chars per term)
-        var results = SearchFts(query, type, limit);
+        var results = SearchFts(query, type, limit, projectId);
         if (results.Count == 0)
-            results = SearchLike(query, type, limit);
+            results = SearchLike(query, type, limit, projectId);
         return results;
     }
 
-    private List<SearchResult> SearchFts(string query, string? type, int limit)
+    private List<SearchResult> SearchFts(string query, string? type, int limit, long? projectId)
     {
         var results = new List<SearchResult>();
         try
         {
             using var cmd = _conn.CreateCommand();
             var typeFilter = type != null ? "AND type = @type" : "";
+            var projectFilter = projectId.HasValue
+                ? "AND scan_id IN (SELECT id FROM scans WHERE project_id = @pid)"
+                : "";
             cmd.CommandText = $"""
                 SELECT type, name, snippet(search_index, 2, '>>>', '<<<', '...', 40) as excerpt, path, scan_id
                 FROM search_index
-                WHERE search_index MATCH @q {typeFilter}
+                WHERE search_index MATCH @q {typeFilter} {projectFilter}
                 ORDER BY rank
                 LIMIT @lim
                 """;
@@ -331,6 +442,7 @@ public sealed class SqliteStore : IResultStore, IDisposable
             cmd.Parameters.AddWithValue("@q", safeQuery);
             cmd.Parameters.AddWithValue("@lim", limit);
             if (type != null) cmd.Parameters.AddWithValue("@type", type);
+            if (projectId.HasValue) cmd.Parameters.AddWithValue("@pid", projectId.Value);
 
             using var reader = cmd.ExecuteReader();
             while (reader.Read())
@@ -349,21 +461,25 @@ public sealed class SqliteStore : IResultStore, IDisposable
         return results;
     }
 
-    private List<SearchResult> SearchLike(string query, string? type, int limit)
+    private List<SearchResult> SearchLike(string query, string? type, int limit, long? projectId)
     {
         var results = new List<SearchResult>();
         using var cmd = _conn.CreateCommand();
         var typeFilter = type != null ? "AND type = @type" : "";
+        var projectFilter = projectId.HasValue
+            ? "AND scan_id IN (SELECT id FROM scans WHERE project_id = @pid)"
+            : "";
         var like = $"%{query}%";
         cmd.CommandText = $"""
             SELECT type, name, content, path, scan_id
             FROM search_index
-            WHERE (name LIKE @q OR content LIKE @q) {typeFilter}
+            WHERE (name LIKE @q OR content LIKE @q) {typeFilter} {projectFilter}
             LIMIT @lim
             """;
         cmd.Parameters.AddWithValue("@q", like);
         cmd.Parameters.AddWithValue("@lim", limit);
         if (type != null) cmd.Parameters.AddWithValue("@type", type);
+        if (projectId.HasValue) cmd.Parameters.AddWithValue("@pid", projectId.Value);
 
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
@@ -435,6 +551,16 @@ public sealed class ProjectInfo
     public long Id { get; init; }
     public required string RootPath { get; init; }
     public string? LastScannedAt { get; init; }
+    public int FileCount { get; init; }
+    public int DirCount { get; init; }
+    public long TotalSize { get; init; }
+    public string? AddInfo { get; init; }
+}
+
+public sealed class ScanInfo
+{
+    public long Id { get; init; }
+    public required string ScannedAt { get; init; }
     public int FileCount { get; init; }
     public int DirCount { get; init; }
     public long TotalSize { get; init; }

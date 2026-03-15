@@ -2,14 +2,14 @@
 .SYNOPSIS
     CodeScan - Windows Build & Deploy Script
 .DESCRIPTION
-    Builds Release, publishes to D:\Util\CodeScan, and adds to user PATH.
+    Builds Release, publishes to ~/.codescan/bin, and adds to user PATH.
 .USAGE
     .\Script\deploy-win.ps1
     .\Script\deploy-win.ps1 -DeployPath "C:\Tools\CodeScan"
 #>
 
 param(
-    [string]$DeployPath = "D:\Util\CodeScan"
+    [string]$DeployPath = (Join-Path $env:USERPROFILE ".codescan\bin")
 )
 
 $ErrorActionPreference = "Stop"
@@ -89,6 +89,10 @@ if ($LASTEXITCODE -ne 0) {
     dotnet (Join-Path $DeployPath "codescan.dll") --version 2>$null
 }
 
+Write-Host ""
+Write-Host "  Deploy path: $DeployPath" -ForegroundColor White
+Write-Host "  Data path:   $env:USERPROFILE\.codescan\db\" -ForegroundColor White
+Write-Host "  Logs path:   $env:USERPROFILE\.codescan\logs\" -ForegroundColor White
 Write-Host ""
 Write-Host "  Usage (from any directory):" -ForegroundColor White
 Write-Host "    codescan --help"

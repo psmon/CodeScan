@@ -4,7 +4,7 @@
 
 CodeScan is a CLI/TUI code scanner that traverses directories, analyzes source files at the class:method level with git blame integration, extracts comments, and stores everything in a local SQLite database for fast search and retrieval. Designed as a single native binary via .NET AOT.
 
-- **CLI mode** (`codescan list/search/projects`): For AI/automation pipelines
+- **CLI mode** (`codescan list/search/projects/project/project-addinfo`): For AI/automation pipelines
 - **TUI mode** (`codescan tui`): Interactive terminal UI for human users
 
 ## Tech Stack
@@ -17,18 +17,36 @@ CodeScan is a CLI/TUI code scanner that traverses directories, analyzes source f
 | Embedded DB | SQLite + FTS5 trigram (`Microsoft.Data.Sqlite`) |
 | Platforms | Windows (PowerShell), Linux (Bash) |
 
+## Data Storage
+
+All data is stored under the user's home directory (`~/.codescan/`), ensuring consistent paths regardless of where the tool is executed:
+
+```
+~/.codescan/
+├── db/
+│   └── codescan.db    # SQLite database (auto-created)
+└── logs/
+    └── *.log          # DevMode/TUI scan logs
+```
+
+- **Windows**: `C:\Users\<username>\.codescan\`
+- **Linux/macOS**: `/home/<username>/.codescan/`
+
+Path management is centralized in `Services/AppPaths.cs`.
+
 ## Project Structure
 
 ```
 CodeScan/
 ├── Program.cs                       # Entry point, CLI parsing, all commands
 ├── CodeScan.csproj                  # Project config (AOT, dependencies)
-├── codescan.db                      # SQLite database (auto-created)
 │
 ├── Commands/
 │   ├── ListCommand.cs               # list: scan + analyze + index to DB
 │   ├── SearchCommand.cs             # search: hybrid FTS5 + git log
-│   └── ProjectsCommand.cs           # projects: list indexed projects
+│   ├── ProjectsCommand.cs           # projects: list indexed projects
+│   ├── ProjectCommand.cs            # project: show project detail info
+│   └── ProjectAddInfoCommand.cs     # project-addinfo: add description
 │
 ├── Models/
 │   ├── FileEntry.cs                 # File/dir info (path, size, methods, comments)
@@ -36,6 +54,7 @@ CodeScan/
 │   └── CommentBlock.cs              # Comment text + nearby code context
 │
 ├── Services/
+│   ├── AppPaths.cs                  # Centralized ~/.codescan/ path management
 │   ├── DirectoryScanner.cs          # Recursive traversal (recent-first sort)
 │   ├── SourceAnalyzer.cs            # Multi-language class/method extraction
 │   ├── CommentExtractor.cs          # Comment extraction with code context
@@ -48,30 +67,32 @@ CodeScan/
 │   └── FileResultStore.cs           # File-based log storage (devmode)
 │
 ├── Tui/
-│   └── TuiApp.cs                    # Terminal.Gui UI (browse, scan, search, projects)
+│   └── TuiApp.cs                    # Terminal.Gui UI (browse, scan, search, projects, project detail)
 │
 └── Prompt/
     ├── 00-First.md                  # Requirements document
-    └── TestFileDB/                  # DevMode log output directory
+    └── 01-LLM-Injection.md         # v0.3.0 upgrade instructions
 ```
 
 ## CLI Commands
 
 ```
-codescan v0.2.0 - Code Scanner & Indexer
+codescan v0.3.0 - Code Scanner & Indexer
 
 Commands:
-  list <path>       Scan directory, analyze, and index to DB
-  search <query>    Search indexed methods, files, docs, comments + git log
-  projects          List all indexed projects
-  tui               Interactive TUI mode (user mode)
-  help [command]    Show help
+  list <path>                  Scan directory, analyze, and index to DB
+  search <query>               Search indexed methods, files, and docs
+  projects                     List all indexed projects
+  project <id>                 Show project detail info
+  project-addinfo <id> <text>  Add description to a project
+  tui                          Interactive TUI mode (user mode)
+  help [command]               Show help
 
 Global Options:
   -h, --help     Show help
   -v, --version  Show version
   --verbose      Verbose output
-  --devmode      Also save results to Prompt/TestFileDB/ as log files
+  --devmode      Also save results to ~/.codescan/logs/ as log files
 ```
 
 ### `list` Options
@@ -91,6 +112,25 @@ Global Options:
 |--------|-------|-------------|
 | `--type` | `-t` | Filter: `method`, `file`, `doc`, `comment`, `commit` |
 | `--limit` | `-l` | Max results (default: 30) |
+| `--project` | `-p` | Search within a specific project only (by project ID) |
+
+### `project` Command
+
+Shows detailed information for a specific project by ID:
+- Project path, file/dir count, total size
+- Method and comment counts from latest scan
+- Project documentation files found
+- AddInfo (additional description) status
+- Scan history
+- If no addinfo exists, prompts user to add one (useful for LLM context)
+
+### `project-addinfo` Command
+
+Adds or replaces a single description for a project. Only one description per project is stored (overwrites previous).
+
+```bash
+codescan project-addinfo <id> "description text"
+```
 
 ### Examples
 
@@ -104,8 +144,18 @@ codescan search "TODO" --type comment
 codescan search "SSE" --type method --limit 10
 codescan search "authentication" --type comment
 
+# Search within a specific project
+codescan search "auth" --project 1
+codescan search "TODO" --project 2 --type comment
+
 # View indexed projects
 codescan projects
+
+# View project detail
+codescan project 1
+
+# Add project description
+codescan project-addinfo 1 "Main web API backend service"
 
 # Interactive TUI
 codescan tui
@@ -144,13 +194,13 @@ Each comment stores:
 
 ## Database (SQLite + FTS5)
 
-File: `codescan.db` (auto-created in working directory)
+File: `~/.codescan/db/codescan.db` (auto-created)
 
 ### Schema
 
 | Table | Purpose |
 |-------|---------|
-| `projects` | Indexed project paths + last scan info (for re-indexing) |
+| `projects` | Indexed project paths + last scan info + addinfo description |
 | `scans` | Scan history per project |
 | `files` | File list per scan (path, size, extension, depth) |
 | `methods` | Class:method per file + git blame (author, date, commit msg) |
@@ -161,10 +211,10 @@ File: `codescan.db` (auto-created in working directory)
 ### Search Strategy (Hybrid)
 
 ```
-search "query"
-  1. FTS5 trigram search (3+ char terms)
+search "query" [--project <id>]
+  1. FTS5 trigram search (3+ char terms) [optionally filtered by project]
   2. LIKE fallback (2-char terms, e.g. Korean 2-syllable words)
-  3. git log --grep (commits not in DB blame)
+  3. git log --grep (commits not in DB blame) [skipped when --project used]
   → Results merged, deduplicated
 ```
 
@@ -179,6 +229,12 @@ search "query"
 | `commit` | Git | Commit message + changed files |
 
 ## Key Design Decisions
+
+### Centralized data storage (`~/.codescan/`)
+DB and logs are stored under the user's home directory, not the working directory. This ensures consistent data access regardless of where `codescan` is executed. Path management is centralized in `AppPaths.cs`.
+
+### Project AddInfo
+Each project can have one additional description (`addinfo`) to provide context that cannot be derived from code alone. This is useful for LLM integrations where project purpose/context is needed.
 
 ### .md files always included
 When `--include` filter is used, `.md` files are always added. Source code and documentation are inseparable context.
@@ -207,7 +263,7 @@ RootSelect ──→ DirBrowse ──→ ScanOptions ──→ Scanning ──�
     │                                            ↑            │
     │                                            └────────────┘
     ├──→ [Search] ──→ SearchInput ──→ SearchResults
-    └──→ [Projects] ──→ Project list ──→ DirBrowse
+    └──→ [Projects] ──→ Project list ──→ ProjectDetail ──→ AddInfo
 ```
 
 ### Key Bindings
@@ -219,6 +275,13 @@ RootSelect ──→ DirBrowse ──→ ScanOptions ──→ Scanning ──�
 | `Up/Down` | Navigate / Scroll |
 | `Tab` | Navigate scan options / search fields |
 | `ESC` | Blocked (prevents accidental exit) |
+
+### TUI Features
+- **Browse & Scan**: Navigate filesystem, configure scan options, run scans
+- **Search**: Search indexed data by keyword across all projects
+- **Projects**: List indexed projects with addinfo status indicator
+- **Project Detail**: View full project info (stats, methods, comments, docs, addinfo, scan history)
+- **AddInfo**: Add/edit project description from within TUI
 
 ### Background Scanning
 Scan runs in `Task.Run()`. Progress streams to UI via `Application.Invoke()` wrapped in `SafeInvoke()` (never throws). Mouse input disabled at OS level via `kernel32.dll SetConsoleMode`.
@@ -251,9 +314,16 @@ dotnet run -- list D:\Code\MyProject --tree --detail --stats
 # Search
 dotnet run -- search "HttpClient" --type method
 dotnet run -- search "TODO" --type comment
+dotnet run -- search "SSE" --project 1
 
 # View projects
 dotnet run -- projects
+
+# View project detail
+dotnet run -- project 1
+
+# Add project description
+dotnet run -- project-addinfo 1 "My project description"
 
 # TUI
 dotnet run -- tui
@@ -268,3 +338,4 @@ dotnet publish -c Release
 - **Linux**: WSL Bash
 - **Sample project**: `D:\Code\AI\memorizer-v1` (426 files, 960 methods, 194 .md)
 - **DB verification**: `codescan projects` shows indexed stats
+- **DB location**: `~/.codescan/db/codescan.db`

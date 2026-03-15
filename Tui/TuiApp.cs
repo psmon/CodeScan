@@ -69,11 +69,11 @@ public class TuiApp
         {
             try { Application.Shutdown(); } catch { }
 
-            var logPath = Path.Combine(Directory.GetCurrentDirectory(), "tui-crash.log");
+            var logPath = Path.Combine(AppPaths.GetLogDir(), "tui-crash.log");
             File.AppendAllText(logPath,
                 $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Fatal:\n{ex}\n\n");
 
-            Console.Error.WriteLine($"TUI crashed. See tui-crash.log");
+            Console.Error.WriteLine($"TUI crashed. See {logPath}");
             Console.Error.WriteLine($"Error: {ex.Message}");
         }
     }
@@ -81,12 +81,15 @@ public class TuiApp
 
 public class MainView : Toplevel
 {
-    private enum Mode { RootSelect, DirBrowse, ScanOptions, Scanning, Results, Projects, SearchInput, SearchResults }
+    private enum Mode { RootSelect, DirBrowse, ScanOptions, Scanning, Results, Projects, SearchInput, SearchResults, ProjectDetail }
 
     private Mode _mode = Mode.RootSelect;
     private string _currentPath = "";
     private readonly Stack<string> _pathHistory = new();
     private volatile bool _scanning = false;
+
+    // current project context (for project detail/addinfo)
+    private long _currentProjectId = 0;
 
     // scan options
     private bool _optTree = true;
@@ -114,6 +117,11 @@ public class MainView : Toplevel
     private readonly Label _lblSearch;
     private readonly TextField _txtSearch;
     private readonly Button _btnSearch;
+
+    // addinfo controls
+    private readonly Label _lblAddInfo;
+    private readonly TextField _txtAddInfo;
+    private readonly Button _btnAddInfo;
 
     private ObservableCollection<string> _listItems = [];
     private List<string> _dirEntries = [];
@@ -264,9 +272,32 @@ public class MainView : Toplevel
         };
         _btnSearch.Accepting += OnExecuteSearch;
 
+        // AddInfo UI (hidden by default)
+        _lblAddInfo = new Label
+        {
+            Text = "Project description (addinfo):",
+            X = 3, Y = 4,
+            Visible = false
+        };
+        _txtAddInfo = new TextField
+        {
+            Text = " ",
+            X = 3, Y = 5,
+            Width = Dim.Fill(4),
+            Visible = false
+        };
+        _btnAddInfo = new Button
+        {
+            Text = ">>> Save AddInfo <<<",
+            X = 3, Y = 7,
+            Visible = false
+        };
+        _btnAddInfo.Accepting += OnSaveAddInfo;
+
         Add(_titleLabel, _pathLabel, _hintLabel, _btnBack, _listView, _resultView,
             _chkTree, _chkDetail, _chkStats, _lblInclude, _txtInclude, _btnExecute,
-            _lblSearch, _txtSearch, _btnSearch);
+            _lblSearch, _txtSearch, _btnSearch,
+            _lblAddInfo, _txtAddInfo, _btnAddInfo);
 
         // Application-level key intercept - fires BEFORE any view processes keys
         Application.KeyDown += OnGlobalKeyDown;
@@ -299,7 +330,7 @@ public class MainView : Toplevel
         }
 
         // ignore when typing in text field
-        if (_txtInclude.HasFocus || _txtSearch.HasFocus) return;
+        if (_txtInclude.HasFocus || _txtSearch.HasFocus || _txtAddInfo.HasFocus) return;
 
         if (IsQKey(key))
         {
@@ -353,6 +384,10 @@ public class MainView : Toplevel
             case Mode.SearchResults:
                 ShowSearchInput();
                 break;
+
+            case Mode.ProjectDetail:
+                ShowProjects();
+                break;
         }
     }
 
@@ -395,6 +430,25 @@ public class MainView : Toplevel
         }
         else if (_mode == Mode.Projects)
         {
+            if (selected is "__HOME__") { ShowRootSelect(); return; }
+            if (selected.StartsWith("__DETAIL_"))
+            {
+                var idStr = selected["__DETAIL_".Length..];
+                if (long.TryParse(idStr, out var pid))
+                    ShowProjectDetail(pid);
+                return;
+            }
+            if (Directory.Exists(selected))
+            {
+                _pathHistory.Clear();
+                _currentPath = selected;
+                ShowDirBrowse(_currentPath);
+            }
+        }
+        else if (_mode == Mode.ProjectDetail)
+        {
+            if (selected is "__PROJECTS__") { ShowProjects(); return; }
+            if (selected is "__ADDINFO__") { ShowAddInfoInput(); return; }
             if (selected is "__HOME__") { ShowRootSelect(); return; }
             if (Directory.Exists(selected))
             {
@@ -541,8 +595,7 @@ public class MainView : Toplevel
         string savedInfo = "";
         try
         {
-            var dbPath = Path.Combine(Directory.GetCurrentDirectory(), "codescan.db");
-            using var db = new SqliteStore(dbPath);
+            using var db = new SqliteStore(AppPaths.DbPath);
             var projectId = db.UpsertProject(Path.GetFullPath(path));
             var scanId = db.InsertScan(projectId, entries);
 
@@ -557,17 +610,16 @@ public class MainView : Toplevel
                 catch { }
             }
 
-            var methodCount = entries.SelectMany(e => e.Methods).Count();
+            var methodTotal = entries.SelectMany(e => e.Methods).Count();
             var fileCountFinal = entries.Count(e => !e.IsDirectory);
-            savedInfo = $"\n\n--- DB: {fileCountFinal} files, {methodCount} methods indexed ---\n";
+            savedInfo = $"\n\n--- DB: {fileCountFinal} files, {methodTotal} methods indexed ---\n";
 
             // Also save file log
             var docContent = ProjectDocFinder.ReadDoc(path);
             var logOutput = docContent != null ? output + docContent : output;
-            var storeDir = Path.Combine(Directory.GetCurrentDirectory(), "Prompt", "TestFileDB");
-            var store = new FileResultStore(storeDir);
+            var store = new FileResultStore(AppPaths.GetLogDir());
             store.Save("tui-list", logOutput);
-            var latest = Directory.GetFiles(storeDir, "*.log")
+            var latest = Directory.GetFiles(AppPaths.GetLogDir(), "*.log")
                 .OrderByDescending(f => f).FirstOrDefault();
             if (latest != null) savedInfo += $"--- Log: {latest} ---\n";
         }
@@ -629,7 +681,7 @@ public class MainView : Toplevel
 
         try
         {
-            var dbPath = Path.Combine(Directory.GetCurrentDirectory(), "codescan.db");
+            var dbPath = AppPaths.DbPath;
             if (!File.Exists(dbPath))
             {
                 ShowSearchResults("No database found. Run 'list --detail' first to index a project.", query);
@@ -713,11 +765,11 @@ public class MainView : Toplevel
         _mode = Mode.Projects;
         _titleLabel.Text = "Indexed Projects";
         _pathLabel.Text = "Projects that have been scanned and indexed";
-        _hintLabel.Text = "[Enter] Re-scan  [Q] Back  [H] Home";
+        _hintLabel.Text = "[Enter] View detail  [Q] Back  [H] Home";
 
         try
         {
-            var dbPath = Path.Combine(Directory.GetCurrentDirectory(), "codescan.db");
+            var dbPath = AppPaths.DbPath;
             if (!File.Exists(dbPath))
             {
                 _listItems.Clear();
@@ -747,8 +799,9 @@ public class MainView : Toplevel
                 {
                     var size = FormatSize(p.TotalSize);
                     var lastScan = p.LastScannedAt ?? "(never)";
-                    _listItems.Add($"  {p.RootPath}");
-                    _dirEntries.Add(p.RootPath);
+                    var addInfoTag = string.IsNullOrWhiteSpace(p.AddInfo) ? "" : " [has addinfo]";
+                    _listItems.Add($"  #{p.Id} {p.RootPath}{addInfoTag}");
+                    _dirEntries.Add($"__DETAIL_{p.Id}");
                     _listItems.Add($"    Files: {p.FileCount}  Dirs: {p.DirCount}  Size: {size}  Last: {lastScan}");
                     _dirEntries.Add("__SEP__");
                 }
@@ -773,6 +826,170 @@ public class MainView : Toplevel
             ShowListMode();
             _listView.SetSource(_listItems);
             _listView.SetFocus();
+        }
+    }
+
+    // ========================
+    // Project Detail
+    // ========================
+    private void ShowProjectDetail(long projectId)
+    {
+        _mode = Mode.ProjectDetail;
+        _currentProjectId = projectId;
+
+        try
+        {
+            using var db = new SqliteStore(AppPaths.DbPath);
+            var project = db.GetProject(projectId);
+            if (project == null)
+            {
+                _titleLabel.Text = "Project Not Found";
+                _listItems.Clear();
+                _dirEntries.Clear();
+                _listItems.Add($"  Project #{projectId} not found.");
+                _dirEntries.Add("__SEP__");
+                _listItems.Add("  [Back to Projects]");
+                _dirEntries.Add("__PROJECTS__");
+                ShowListMode();
+                _listView.SetSource(_listItems);
+                _listView.SetFocus();
+                return;
+            }
+
+            var methodCount = db.GetProjectMethodCount(projectId);
+            var commentCount = db.GetProjectCommentCount(projectId);
+            var docs = db.GetProjectDocs(projectId);
+            var scans = db.GetProjectScans(projectId, 5);
+
+            _titleLabel.Text = $"Project #{projectId} Detail";
+            _pathLabel.Text = project.RootPath;
+            _hintLabel.Text = "[Enter] Select action  [Q] Back  [H] Home";
+
+            _listItems.Clear();
+            _dirEntries.Clear();
+
+            _listItems.Add($"  Path:       {project.RootPath}");
+            _dirEntries.Add(project.RootPath);
+            _listItems.Add($"  Files: {project.FileCount}  Dirs: {project.DirCount}  Size: {FormatSize(project.TotalSize)}");
+            _dirEntries.Add("__SEP__");
+            _listItems.Add($"  Methods: {methodCount}  Comments: {commentCount}  Last: {project.LastScannedAt ?? "(never)"}");
+            _dirEntries.Add("__SEP__");
+
+            if (docs.Count > 0)
+            {
+                _listItems.Add($"  Docs: {string.Join(", ", docs)}");
+                _dirEntries.Add("__SEP__");
+            }
+
+            _listItems.Add("  ----------------");
+            _dirEntries.Add("__SEP__");
+
+            if (!string.IsNullOrWhiteSpace(project.AddInfo))
+            {
+                _listItems.Add($"  AddInfo: {project.AddInfo}");
+                _dirEntries.Add("__SEP__");
+                _listItems.Add("  [Edit AddInfo]");
+                _dirEntries.Add("__ADDINFO__");
+            }
+            else
+            {
+                _listItems.Add("  AddInfo: (none)");
+                _dirEntries.Add("__SEP__");
+                _listItems.Add("  [Add Description] - Add project description");
+                _dirEntries.Add("__ADDINFO__");
+                _listItems.Add("  ----------------");
+                _dirEntries.Add("__SEP__");
+                _listItems.Add("  Tip: No description set. Add one to help LLM understand this project.");
+                _dirEntries.Add("__SEP__");
+            }
+
+            if (scans.Count > 0)
+            {
+                _listItems.Add("  ----------------");
+                _dirEntries.Add("__SEP__");
+                _listItems.Add("  Scan History:");
+                _dirEntries.Add("__SEP__");
+                foreach (var s in scans)
+                {
+                    _listItems.Add($"    #{s.Id}  Files: {s.FileCount}  Dirs: {s.DirCount}  {s.ScannedAt}");
+                    _dirEntries.Add("__SEP__");
+                }
+            }
+
+            _listItems.Add("  ----------------");
+            _dirEntries.Add("__SEP__");
+            _listItems.Add("  [Back to Projects]");
+            _dirEntries.Add("__PROJECTS__");
+            _listItems.Add("  [Home]");
+            _dirEntries.Add("__HOME__");
+
+            ShowListMode();
+            _listView.SetSource(_listItems);
+            _listView.SelectedItem = 0;
+            _listView.SetFocus();
+        }
+        catch (Exception ex)
+        {
+            _listItems.Clear();
+            _dirEntries.Clear();
+            _listItems.Add($"  Error: {ex.Message}");
+            _dirEntries.Add("__SEP__");
+            _listItems.Add("  [Back to Projects]");
+            _dirEntries.Add("__PROJECTS__");
+            ShowListMode();
+            _listView.SetSource(_listItems);
+            _listView.SetFocus();
+        }
+    }
+
+    // ========================
+    // AddInfo
+    // ========================
+    private void ShowAddInfoInput()
+    {
+        _titleLabel.Text = $"Add Description - Project #{_currentProjectId}";
+        _pathLabel.Text = "Enter a description for this project";
+        _hintLabel.Text = "[Enter] Save  [Q] Back";
+
+        _listView.Visible = false;
+        _resultView.Visible = false;
+        HideOptions();
+
+        // Load existing addinfo
+        try
+        {
+            using var db = new SqliteStore(AppPaths.DbPath);
+            var project = db.GetProject(_currentProjectId);
+            _txtAddInfo.Text = project?.AddInfo ?? " ";
+        }
+        catch { _txtAddInfo.Text = " "; }
+
+        _lblAddInfo.Visible = true;
+        _txtAddInfo.Visible = true;
+        _btnAddInfo.Visible = true;
+
+        _txtAddInfo.SetFocus();
+    }
+
+    private void OnSaveAddInfo(object? sender, CommandEventArgs e)
+    {
+        var info = _txtAddInfo.Text?.ToString()?.Trim() ?? "";
+        if (string.IsNullOrEmpty(info)) return;
+
+        try
+        {
+            using var db = new SqliteStore(AppPaths.DbPath);
+            db.SetProjectAddInfo(_currentProjectId, info);
+
+            _lblAddInfo.Visible = false;
+            _txtAddInfo.Visible = false;
+            _btnAddInfo.Visible = false;
+
+            ShowProjectDetail(_currentProjectId);
+        }
+        catch (Exception ex)
+        {
+            _pathLabel.Text = $"Error: {ex.Message}";
         }
     }
 
@@ -913,6 +1130,9 @@ public class MainView : Toplevel
         _lblSearch.Visible = false;
         _txtSearch.Visible = false;
         _btnSearch.Visible = false;
+        _lblAddInfo.Visible = false;
+        _txtAddInfo.Visible = false;
+        _btnAddInfo.Visible = false;
     }
 
     private static bool IsDefaultExcluded(string dirName)

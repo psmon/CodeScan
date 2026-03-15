@@ -6,10 +6,9 @@ namespace CodeScan;
 
 class Program
 {
-    const string Version = "0.2.0";
+    const string Version = "0.3.0";
 
-    static SqliteStore OpenDb() => new(
-        Path.Combine(Directory.GetCurrentDirectory(), "codescan.db"));
+    static SqliteStore OpenDb() => new(AppPaths.DbPath);
 
     static int Main(string[] args)
     {
@@ -47,6 +46,8 @@ class Program
             "list" => RunList(commandArgs, globalArgs),
             "search" => RunSearch(commandArgs),
             "projects" => RunProjects(),
+            "project" => RunProject(commandArgs),
+            "project-addinfo" => RunProjectAddInfo(commandArgs),
             "tui" => RunTui(),
             "help" => RunHelp(commandArgs),
             _ => UnknownCommand(command)
@@ -107,8 +108,7 @@ class Program
         IResultStore? store = null;
         if (global.DevMode)
         {
-            var storeDir = Path.Combine(Directory.GetCurrentDirectory(), "Prompt", "TestFileDB");
-            store = new FileResultStore(storeDir);
+            store = new FileResultStore(AppPaths.GetLogDir());
         }
 
         options.Verbose = global.Verbose;
@@ -133,6 +133,10 @@ class Program
                 case "-l" or "--limit" when i + 1 < args.Length:
                     if (int.TryParse(args[++i], out var lim))
                         options.Limit = lim;
+                    break;
+                case "-p" or "--project" when i + 1 < args.Length:
+                    if (long.TryParse(args[++i], out var pid))
+                        options.ProjectId = pid;
                     break;
                 case "-h" or "--help":
                     PrintSearchHelp();
@@ -163,6 +167,46 @@ class Program
         return cmd.Execute();
     }
 
+    static int RunProject(string[] args)
+    {
+        if (args.Length == 0 || args[0] is "-h" or "--help")
+        {
+            PrintProjectHelp();
+            return args.Length > 0 ? 0 : 1;
+        }
+
+        if (!long.TryParse(args[0], out var projectId))
+        {
+            Console.Error.WriteLine($"Error: invalid project ID '{args[0]}'");
+            return 1;
+        }
+
+        using var db = OpenDb();
+        var cmd = new ProjectCommand(db);
+        return cmd.Execute(projectId);
+    }
+
+    static int RunProjectAddInfo(string[] args)
+    {
+        if (args.Length < 2 || args[0] is "-h" or "--help")
+        {
+            PrintProjectAddInfoHelp();
+            return args.Length > 0 && args[0] is "-h" or "--help" ? 0 : 1;
+        }
+
+        if (!long.TryParse(args[0], out var projectId))
+        {
+            Console.Error.WriteLine($"Error: invalid project ID '{args[0]}'");
+            return 1;
+        }
+
+        var description = string.Join(" ", args[1..]);
+
+        using var db = OpenDb();
+        var cmd = new ProjectAddInfoCommand(db);
+        return cmd.Execute(projectId, description);
+    }
+
     static int RunTui()
     {
         var app = new TuiApp();
@@ -183,6 +227,8 @@ class Program
             case "list": PrintListHelp(); break;
             case "search": PrintSearchHelp(); break;
             case "projects": Console.WriteLine("  codescan projects - List all indexed projects."); break;
+            case "project": PrintProjectHelp(); break;
+            case "project-addinfo": PrintProjectAddInfoHelp(); break;
             case "tui": Console.WriteLine("  codescan tui - Interactive TUI mode."); break;
             default:
                 Console.WriteLine($"Unknown command: {args[0]}");
@@ -228,21 +274,30 @@ class Program
         Usage: codescan [command] [options]
 
         Commands:
-          list <path>       Scan directory, analyze, and index to DB
-          search <query>    Search indexed methods, files, and docs
-          projects          List all indexed projects
-          tui               Interactive TUI mode (user mode)
-          help [command]    Show help
+          list <path>                  Scan directory, analyze, and index to DB
+          search <query>               Search indexed methods, files, and docs
+          projects                     List all indexed projects
+          project <id>                 Show project detail info
+          project-addinfo <id> <text>  Add description to a project
+          tui                          Interactive TUI mode (user mode)
+          help [command]               Show help
 
         Global Options:
           -h, --help     Show help
           -v, --version  Show version
           --verbose      Verbose output
-          --devmode      Also save results to Prompt/TestFileDB/ as log files
+          --devmode      Also save results to ~/.codescan/logs/ as log files
+
+        Data:
+          DB:   ~/.codescan/db/codescan.db
+          Logs: ~/.codescan/logs/
 
         Examples:
           codescan list ./src --tree --detail --stats
           codescan search "HttpClient" --type method
+          codescan search "auth" --project 1
+          codescan project 1
+          codescan project-addinfo 1 "Main web API backend service"
           codescan projects
           codescan tui
         """);
@@ -265,7 +320,7 @@ class Program
           -h, --help             Show help
 
         Notes:
-          Results are always saved to codescan.db (SQLite).
+          Results are always saved to ~/.codescan/db/codescan.db (SQLite).
           .md files are always included even with --include filter.
           --detail shows last commit info when used in a git repository.
 
@@ -284,14 +339,51 @@ class Program
         Usage: codescan search <query> [options]
 
         Options:
-          -t, --type <type>   Filter by: method, file, doc
-          -l, --limit <n>     Max results (default: 30)
-          -h, --help          Show help
+          -t, --type <type>      Filter by: method, file, doc, comment, commit
+          -l, --limit <n>        Max results (default: 30)
+          -p, --project <id>     Search within a specific project only
+          -h, --help             Show help
 
         Examples:
           codescan search "HttpClient"
           codescan search "auth" --type method --limit 10
           codescan search "SSE" --type doc
+          codescan search "TODO" --project 1 --type comment
+        """);
+    }
+
+    static void PrintProjectHelp()
+    {
+        Console.WriteLine("""
+        codescan project - Show project detail info
+
+        Usage: codescan project <id>
+
+        Shows all collected information for a specific project:
+          - Project path and scan statistics
+          - Additional description (addinfo) if set
+          - Scan history
+          - Prompt to add description via LLM if no addinfo exists
+
+        Examples:
+          codescan project 1
+          codescan project 2
+        """);
+    }
+
+    static void PrintProjectAddInfoHelp()
+    {
+        Console.WriteLine("""
+        codescan project-addinfo - Add description to a project
+
+        Usage: codescan project-addinfo <id> <description>
+
+        Adds or replaces a single description for the specified project.
+        Only one description per project is stored (overwrites previous).
+
+        Examples:
+          codescan project-addinfo 1 "Main web API backend service using ASP.NET Core"
+          codescan project-addinfo 2 "React frontend with TypeScript"
         """);
     }
 }

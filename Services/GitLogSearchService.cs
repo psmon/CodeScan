@@ -9,7 +9,7 @@ public static class GitLogSearchService
         var results = new List<SearchResult>();
 
         // Search all indexed projects
-        var dbPath = Path.Combine(Directory.GetCurrentDirectory(), "codescan.db");
+        var dbPath = AppPaths.DbPath;
         if (!File.Exists(dbPath)) return results;
 
         using var db = new SqliteStore(dbPath);

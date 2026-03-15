@@ -14,11 +14,11 @@ public sealed class SearchCommand
     public int Execute(string query, SearchOptions options)
     {
         // 1) DB search (FTS5 + LIKE fallback)
-        var dbResults = _db.Search(query, options.Type, options.Limit);
+        var dbResults = _db.Search(query, options.Type, options.Limit, options.ProjectId);
 
-        // 2) Git log search (hybrid) — skip if type filter excludes commits
+        // 2) Git log search (hybrid) — skip if type filter excludes commits or project-scoped
         var gitResults = new List<SearchResult>();
-        if (options.Type is null or "commit")
+        if (options.Type is null or "commit" && !options.ProjectId.HasValue)
         {
             var gitLimit = Math.Max(5, options.Limit - dbResults.Count);
             gitResults = GitLogSearchService.Search(query, gitLimit);
@@ -36,7 +36,8 @@ public sealed class SearchCommand
         // Print DB results
         if (totalDb > 0)
         {
-            Console.WriteLine($"=== DB Index ({totalDb} results) ===\n");
+            var scope = options.ProjectId.HasValue ? $" (project #{options.ProjectId})" : "";
+            Console.WriteLine($"=== DB Index ({totalDb} results){scope} ===\n");
             PrintResults(dbResults);
         }
 
@@ -78,4 +79,5 @@ public sealed class SearchOptions
 {
     public string? Type { get; set; } // method, file, doc, commit
     public int Limit { get; set; } = 30;
+    public long? ProjectId { get; set; }
 }
