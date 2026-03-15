@@ -8,7 +8,7 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
 
-        <!-- AOT -->
+        <!-- AOT (use publish profiles for local deploy) -->
         <PublishAot>true</PublishAot>
         <InvariantGlobalization>false</InvariantGlobalization>
         <TrimMode>link</TrimMode>

@@ -45,7 +45,7 @@ class Program
         {
             "list" => RunList(commandArgs, globalArgs),
             "search" => RunSearch(commandArgs),
-            "projects" => RunProjects(),
+            "projects" => RunProjects(commandArgs),
             "project" => RunProject(commandArgs),
             "project-addinfo" => RunProjectAddInfo(commandArgs),
             "tui" => RunTui(),
@@ -160,8 +160,14 @@ class Program
         return cmd.Execute(query, options);
     }
 
-    static int RunProjects()
+    static int RunProjects(string[] args)
     {
+        if (args.Length > 0 && args[0] is "-h" or "--help")
+        {
+            PrintProjectsHelp();
+            return 0;
+        }
+
         using var db = OpenDb();
         var cmd = new ProjectsCommand(db);
         return cmd.Execute();
@@ -226,7 +232,7 @@ class Program
         {
             case "list": PrintListHelp(); break;
             case "search": PrintSearchHelp(); break;
-            case "projects": Console.WriteLine("  codescan projects - List all indexed projects."); break;
+            case "projects": PrintProjectsHelp(); break;
             case "project": PrintProjectHelp(); break;
             case "project-addinfo": PrintProjectAddInfoHelp(); break;
             case "tui": Console.WriteLine("  codescan tui - Interactive TUI mode."); break;
@@ -249,16 +255,28 @@ class Program
     {
         var global = new GlobalOptions();
         var rest = new List<string>();
+        bool commandFound = false;
 
         for (int i = 0; i < args.Length; i++)
         {
+            // Once a command word is found, pass everything else through
+            if (commandFound)
+            {
+                rest.Add(args[i]);
+                continue;
+            }
+
             switch (args[i])
             {
                 case "-h" or "--help": global.ShowHelp = true; break;
                 case "-v" or "--version": global.ShowVersion = true; break;
                 case "--verbose": global.Verbose = true; break;
                 case "--devmode": global.DevMode = true; break;
-                default: rest.Add(args[i]); break;
+                default:
+                    rest.Add(args[i]);
+                    if (!args[i].StartsWith('-'))
+                        commandFound = true;
+                    break;
             }
         }
 
@@ -352,6 +370,28 @@ class Program
         """);
     }
 
+    static void PrintProjectsHelp()
+    {
+        Console.WriteLine("""
+        codescan projects - List all indexed projects
+
+        Usage: codescan projects
+
+        Shows a table of all projects that have been scanned and indexed:
+          - Project ID, file/dir count, total size
+          - Last scan timestamp
+          - Project path
+
+        Use project IDs with other commands:
+          codescan project <id>                 View project detail
+          codescan project-addinfo <id> <text>  Add description
+          codescan search <query> --project <id>  Search within project
+
+        Examples:
+          codescan projects
+        """);
+    }
+
     static void PrintProjectHelp()
     {
         Console.WriteLine("""
@@ -381,9 +421,17 @@ class Program
         Adds or replaces a single description for the specified project.
         Only one description per project is stored (overwrites previous).
 
+        This is useful for providing context that cannot be derived from
+        code alone. LLMs can use 'codescan project <id>' to understand
+        the project, then add their analysis as addinfo:
+
+          1. codescan project <id>          # Review project info
+          2. codescan search "" --project <id>  # Browse indexed data
+          3. codescan project-addinfo <id> "..."  # Save understanding
+
         Examples:
-          codescan project-addinfo 1 "Main web API backend service using ASP.NET Core"
-          codescan project-addinfo 2 "React frontend with TypeScript"
+          codescan project-addinfo 1 "ASP.NET Core + Akka.NET web API with LLM chatbot"
+          codescan project-addinfo 2 "React frontend with TypeScript, i18n support"
         """);
     }
 }

@@ -36,6 +36,7 @@ mkdir -p "$DEPLOY_PATH"
 echo "[2/4] Building Release..."
 dotnet publish "$PROJECT_DIR/CodeScan.csproj" \
     -c Release \
+    -r linux-x64 \
     -o "$DEPLOY_PATH" \
     --no-self-contained \
     -p:PublishAot=false \

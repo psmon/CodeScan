@@ -31,4 +31,7 @@ CLI명령은 예시이며 CLI명령이 추가되는경우 아규먼트포함 더
 ###
 로컬테스트용 배포스크립트이며 다음을 수정
 - Script/deploy-win.ps1 : 이 경로도 , 기본사용자/.codescan/bin 에 실행파일 배포로 개선
-- Script/deploy-linux.sh : 이파일은 리눅스용으로 동일컨셉으로 추가 
+- Script/deploy-linux.sh : 이파일은 리눅스용으로 동일컨셉으로 추가
+
+- cli 기능 추가되었는데 -h 에는 추가안된듯함..추가해죠
+  - 부가적으로 addinfo 사용은 LLM 이 이 프로젝트를 이해했으면 이해한내용을 추가할수 있습니다. 

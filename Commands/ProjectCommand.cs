@@ -52,13 +52,15 @@ public sealed class ProjectCommand
         {
             Console.WriteLine("  AddInfo:    (none)");
             Console.WriteLine();
-            Console.WriteLine("  Tip: No additional description set for this project.");
-            Console.WriteLine("  You can add one manually:");
+            Console.WriteLine("  Tip: No description set. Add one to help understand this project.");
+            Console.WriteLine();
+            Console.WriteLine("  Manual:");
             Console.WriteLine($"    codescan project-addinfo {projectId} \"Project description here\"");
             Console.WriteLine();
-            Console.WriteLine("  Or ask an LLM to analyze and generate a description:");
-            Console.WriteLine($"    Use 'codescan search \"\" --project {projectId}' to review indexed data,");
-            Console.WriteLine("    then set a description with project-addinfo.");
+            Console.WriteLine("  LLM-assisted (LLM analyzes the project and saves its understanding):");
+            Console.WriteLine($"    1. codescan project {projectId}                        # Review project info");
+            Console.WriteLine($"    2. codescan search \"\" --project {projectId}             # Browse indexed data");
+            Console.WriteLine($"    3. codescan project-addinfo {projectId} \"analysis result\"  # Save understanding");
         }
 
         // Scan history
