@@ -47,6 +47,7 @@ class Program
 
         return command switch
         {
+            "scan" => RunScan(commandArgs, globalArgs),
             "list" => RunList(commandArgs, globalArgs),
             "search" => RunSearch(commandArgs),
             "projects" => RunProjects(commandArgs),
@@ -56,6 +57,55 @@ class Program
             "help" => RunHelp(commandArgs),
             _ => UnknownCommand(command)
         };
+    }
+
+    static int RunScan(string[] args, GlobalOptions global)
+    {
+        if (global.ShowHelp || (args.Length > 0 && args[0] is "-h" or "--help"))
+        {
+            PrintScanHelp();
+            return 0;
+        }
+
+        // scan = list --detail --tree --stats (defaults applied)
+        var scanArgs = new List<string>();
+        string? path = null;
+
+        for (int i = 0; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "-i" or "--include" when i + 1 < args.Length:
+                    scanArgs.Add(args[i]);
+                    scanArgs.Add(args[++i]);
+                    break;
+                case "-e" or "--exclude" when i + 1 < args.Length:
+                    scanArgs.Add(args[i]);
+                    scanArgs.Add(args[++i]);
+                    break;
+                case "-d" or "--depth" when i + 1 < args.Length:
+                    scanArgs.Add(args[i]);
+                    scanArgs.Add(args[++i]);
+                    break;
+                default:
+                    if (!args[i].StartsWith('-') && path == null)
+                        path = args[i];
+                    else
+                        scanArgs.Add(args[i]);
+                    break;
+            }
+        }
+
+        // Default path: current directory
+        path ??= ".";
+        scanArgs.Insert(0, path);
+
+        // Always enable --detail --tree --stats for scan
+        if (!scanArgs.Contains("--detail")) scanArgs.Add("--detail");
+        if (!scanArgs.Contains("--tree")) scanArgs.Add("--tree");
+        if (!scanArgs.Contains("-s") && !scanArgs.Contains("--stats")) scanArgs.Add("--stats");
+
+        return RunList(scanArgs.ToArray(), global);
     }
 
     static int RunList(string[] args, GlobalOptions global)
@@ -234,6 +284,7 @@ class Program
 
         switch (args[0].ToLowerInvariant())
         {
+            case "scan": PrintScanHelp(); break;
             case "list": PrintListHelp(); break;
             case "search": PrintSearchHelp(); break;
             case "projects": PrintProjectsHelp(); break;
@@ -296,12 +347,13 @@ class Program
         Usage: codescan [command] [options]
 
         Commands:
-          list <path>                  Scan directory, analyze, and index to DB
+          scan [path]                  Scan & register project (= list --detail --tree --stats)
+          list <path>                  Scan directory with custom options
           search <query>               Search indexed methods, files, and docs
           projects                     List all indexed projects
           project <id>                 Show project detail info
           project-addinfo <id> <text>  Add description to a project
-          tui                          Interactive TUI mode (user mode)
+          tui                          Interactive TUI mode
           help [command]               Show help
 
         Global Options:
@@ -314,14 +366,46 @@ class Program
           DB:   ~/.codescan/db/codescan.db
           Logs: ~/.codescan/logs/
 
+        Quick Start:
+          codescan scan                            Scan current directory
+          codescan scan D:\Code\MyProject          Scan specific project
+          codescan projects                        See registered projects
+          codescan project 1                       View project detail
+          codescan project-addinfo 1 "description" Add project description
+          codescan search "HttpClient"             Search across all projects
+        """);
+    }
+
+    static void PrintScanHelp()
+    {
+        Console.WriteLine("""
+        codescan scan - Scan & register a project to DB
+
+        Usage: codescan scan [path] [options]
+
+        Scans a directory, analyzes source code (class:method + git blame +
+        comments), and indexes everything to the local DB. This is the
+        recommended way to register a new project.
+
+        If [path] is omitted, scans the current directory.
+        Equivalent to: codescan list <path> --detail --tree --stats
+
+        Options:
+          -i, --include <exts>   Include extensions (comma-sep, e.g. .cs,.js)
+          -e, --exclude <dirs>   Exclude directories (comma-sep, e.g. bin,obj)
+          -d, --depth <n>        Max traversal depth
+          -h, --help             Show help
+
         Examples:
-          codescan list ./src --tree --detail --stats
-          codescan search "HttpClient" --type method
-          codescan search "auth" --project 1
-          codescan project 1
-          codescan project-addinfo 1 "Main web API backend service"
-          codescan projects
-          codescan tui
+          codescan scan                           Scan current directory
+          codescan scan D:\Code\MyProject         Scan specific path
+          codescan scan ./src -i ".cs,.js"        Scan with extension filter
+          codescan scan . --depth 3               Scan with depth limit
+
+        After scanning:
+          codescan projects                       See all registered projects
+          codescan project <id>                   View project detail
+          codescan project-addinfo <id> "text"    Add project description
         """);
     }
 
