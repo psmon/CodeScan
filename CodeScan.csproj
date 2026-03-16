@@ -14,8 +14,7 @@
         <TrimMode>link</TrimMode>
         <IlcOptimizationPreference>Size</IlcOptimizationPreference>
 
-        <!-- Version -->
-        <Version>0.1.0</Version>
+        <!-- Version: auto-bumped by BumpVersion target (do not set manually) -->
     </PropertyGroup>
 
     <ItemGroup>
@@ -26,5 +25,57 @@
         <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.5" />
         <PackageReference Include="Terminal.Gui" Version="2.0.0-beta.*" />
     </ItemGroup>
+
+    <!-- ============================================================
+         Auto Version Bump: 빌드마다 마이너(끝자리) +1
+         마이너 >= 100 → 마이너 리셋, 중간 버전 +1
+         메이저는 수동만 (version.txt 직접 수정)
+         현재 버전은 version.txt 에서 관리
+         ============================================================ -->
+    <UsingTask TaskName="BumpVersion"
+               TaskFactory="RoslynCodeTaskFactory"
+               AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+        <ParameterGroup>
+            <VersionFilePath ParameterType="System.String" Required="true" />
+            <ResultVersion ParameterType="System.String" Output="true" />
+        </ParameterGroup>
+        <Task>
+            <Code Type="Fragment" Language="cs"><![CDATA[
+int major = 0, middle = 0, minor = 0;
+if (File.Exists(VersionFilePath))
+{
+    var parts = File.ReadAllText(VersionFilePath).Trim().Split('.');
+    if (parts.Length == 3)
+    {
+        int.TryParse(parts[0], out major);
+        int.TryParse(parts[1], out middle);
+        int.TryParse(parts[2], out minor);
+    }
+}
+
+// Bump minor
+minor++;
+
+// Rollover: minor >= 100 → reset minor, bump middle
+if (minor >= 100)
+{
+    minor = 0;
+    middle++;
+}
+
+// Major는 자동 증가 없음 (version.txt 에서 수동 변경)
+ResultVersion = $"{major}.{middle}.{minor}";
+File.WriteAllText(VersionFilePath, ResultVersion);
+]]>
+            </Code>
+        </Task>
+    </UsingTask>
+
+    <Target Name="AutoBumpVersion" BeforeTargets="BeforeBuild">
+        <BumpVersion VersionFilePath="$(MSBuildProjectDirectory)\version.txt">
+            <Output TaskParameter="ResultVersion" PropertyName="Version" />
+        </BumpVersion>
+        <Message Importance="high" Text="=== CodeScan Build Version: $(Version) ===" />
+    </Target>
 
 </Project>

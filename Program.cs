@@ -1,3 +1,4 @@
+using System.Reflection;
 using CodeScan.Commands;
 using CodeScan.Services;
 using CodeScan.Tui;
@@ -6,7 +7,10 @@ namespace CodeScan;
 
 class Program
 {
-    const string Version = "0.3.0";
+    static string Version =>
+        typeof(Program).Assembly
+            .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion?.Split('+')[0] ?? "0.0.0";
 
     static SqliteStore OpenDb() => new(AppPaths.DbPath);
 
