@@ -53,6 +53,8 @@ class Program
             "projects" => RunProjects(commandArgs),
             "project" => RunProject(commandArgs),
             "project-addinfo" => RunProjectAddInfo(commandArgs),
+            "project-update" => RunProjectUpdate(commandArgs),
+            "project-delete" => RunProjectDelete(commandArgs),
             "tui" => RunTui(),
             "help" => RunHelp(commandArgs),
             _ => UnknownCommand(command)
@@ -241,9 +243,11 @@ class Program
             return 1;
         }
 
+        bool detail = args.Any(a => a is "--detail");
+
         using var db = OpenDb();
         var cmd = new ProjectCommand(db);
-        return cmd.Execute(projectId);
+        return cmd.Execute(projectId, detail);
     }
 
     static int RunProjectAddInfo(string[] args)
@@ -265,6 +269,63 @@ class Program
         using var db = OpenDb();
         var cmd = new ProjectAddInfoCommand(db);
         return cmd.Execute(projectId, description);
+    }
+
+    static int RunProjectUpdate(string[] args)
+    {
+        if (args.Length < 2 || args[0] is "-h" or "--help")
+        {
+            PrintProjectUpdateHelp();
+            return args.Length > 0 && args[0] is "-h" or "--help" ? 0 : 1;
+        }
+
+        if (!long.TryParse(args[0], out var projectId))
+        {
+            Console.Error.WriteLine($"Error: invalid project ID '{args[0]}'");
+            return 1;
+        }
+
+        string? newPath = null;
+        string? newAddInfo = null;
+
+        for (int i = 1; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--path" when i + 1 < args.Length:
+                    newPath = args[++i];
+                    break;
+                case "--addinfo" when i + 1 < args.Length:
+                    newAddInfo = string.Join(" ", args[(i + 1)..]);
+                    i = args.Length; // consume all remaining
+                    break;
+            }
+        }
+
+        using var db = OpenDb();
+        var cmd = new ProjectUpdateCommand(db);
+        return cmd.Execute(projectId, newPath, newAddInfo);
+    }
+
+    static int RunProjectDelete(string[] args)
+    {
+        if (args.Length == 0 || args[0] is "-h" or "--help")
+        {
+            PrintProjectDeleteHelp();
+            return args.Length > 0 ? 0 : 1;
+        }
+
+        if (!long.TryParse(args[0], out var projectId))
+        {
+            Console.Error.WriteLine($"Error: invalid project ID '{args[0]}'");
+            return 1;
+        }
+
+        bool force = args.Any(a => a is "-f" or "--force");
+
+        using var db = OpenDb();
+        var cmd = new ProjectDeleteCommand(db);
+        return cmd.Execute(projectId, force);
     }
 
     static int RunTui()
@@ -290,6 +351,8 @@ class Program
             case "projects": PrintProjectsHelp(); break;
             case "project": PrintProjectHelp(); break;
             case "project-addinfo": PrintProjectAddInfoHelp(); break;
+            case "project-update": PrintProjectUpdateHelp(); break;
+            case "project-delete": PrintProjectDeleteHelp(); break;
             case "tui": Console.WriteLine("  codescan tui - Interactive TUI mode."); break;
             default:
                 Console.WriteLine($"Unknown command: {args[0]}");
@@ -351,8 +414,10 @@ class Program
           list <path>                  Scan directory with custom options
           search <query>               Search indexed methods, files, and docs
           projects                     List all indexed projects
-          project <id>                 Show project detail info
+          project <id> [--detail]      Show project info (summary / detail)
           project-addinfo <id> <text>  Add description to a project
+          project-update <id> [opts]   Update project fields (path, addinfo)
+          project-delete <id>          Delete a project from DB
           tui                          Interactive TUI mode
           help [command]               Show help
 
@@ -370,8 +435,11 @@ class Program
           codescan scan                            Scan current directory
           codescan scan D:\Code\MyProject          Scan specific project
           codescan projects                        See registered projects
-          codescan project 1                       View project detail
+          codescan project 1                       View project summary
+          codescan project 1 --detail              View full project detail
           codescan project-addinfo 1 "description" Add project description
+          codescan project-update 1 --path D:\new  Update project path
+          codescan project-delete 1                Delete project from DB
           codescan search "HttpClient"             Search across all projects
         """);
     }
@@ -483,19 +551,25 @@ class Program
     static void PrintProjectHelp()
     {
         Console.WriteLine("""
-        codescan project - Show project detail info
+        codescan project - Show project info
 
-        Usage: codescan project <id>
+        Usage: codescan project <id> [--detail]
 
-        Shows all collected information for a specific project:
-          - Project path and scan statistics
-          - Additional description (addinfo) if set
+        Shows project information. By default shows a summary:
+          - Project path, file/dir count, size, scan date
+          - Method/comment counts, extensions, authors
+          - AddInfo (description) if set
+
+        With --detail, also shows:
+          - Project documentation files (README, AGENT.md, etc.)
+          - Full file list
+          - All methods grouped by file (with git blame)
+          - All comments grouped by file
           - Scan history
-          - Prompt to add description via LLM if no addinfo exists
 
         Examples:
-          codescan project 1
-          codescan project 2
+          codescan project 1             Summary view
+          codescan project 1 --detail    Full detail view
         """);
     }
 
@@ -520,6 +594,47 @@ class Program
         Examples:
           codescan project-addinfo 1 "ASP.NET Core + Akka.NET web API with LLM chatbot"
           codescan project-addinfo 2 "React frontend with TypeScript, i18n support"
+        """);
+    }
+    static void PrintProjectUpdateHelp()
+    {
+        Console.WriteLine("""
+        codescan project-update - Update project fields
+
+        Usage: codescan project-update <id> [options]
+
+        Updates specific fields of a registered project without re-scanning.
+
+        Options:
+          --path <path>        Update the project root path
+          --addinfo <text>     Update the project description
+          -h, --help           Show help
+
+        Examples:
+          codescan project-update 1 --path D:\Code\NewLocation
+          codescan project-update 1 --addinfo "Updated project description"
+          codescan project-update 1 --path D:\New --addinfo "New desc"
+        """);
+    }
+
+    static void PrintProjectDeleteHelp()
+    {
+        Console.WriteLine("""
+        codescan project-delete - Delete a project from DB
+
+        Usage: codescan project-delete <id> [-f|--force]
+
+        Removes a project and all its scan data (files, methods, comments,
+        docs, search index) from the database. This does NOT delete actual
+        source files on disk.
+
+        Options:
+          -f, --force    Skip confirmation prompt
+          -h, --help     Show help
+
+        Examples:
+          codescan project-delete 1           Delete with confirmation
+          codescan project-delete 1 --force   Delete without confirmation
         """);
     }
 }

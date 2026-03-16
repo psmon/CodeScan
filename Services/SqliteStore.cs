@@ -216,6 +216,42 @@ public sealed class SqliteStore : IResultStore, IDisposable
         cmd.ExecuteNonQuery();
     }
 
+    public void SetProjectPath(long projectId, string newPath)
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = "UPDATE projects SET root_path = @path WHERE id = @id";
+        cmd.Parameters.AddWithValue("@path", newPath);
+        cmd.Parameters.AddWithValue("@id", projectId);
+        cmd.ExecuteNonQuery();
+    }
+
+    public bool DeleteProject(long projectId)
+    {
+        using var tx = _conn.BeginTransaction();
+
+        // Delete search_index entries for this project's scans
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM search_index WHERE scan_id IN (SELECT id FROM scans WHERE project_id = @pid)";
+        cmd.Parameters.AddWithValue("@pid", projectId);
+        try { cmd.ExecuteNonQuery(); } catch { /* FTS may not exist */ }
+
+        // Delete comments -> methods -> files -> project_docs -> scans -> project
+        cmd.CommandText = """
+            DELETE FROM comments WHERE file_id IN (
+                SELECT f.id FROM files f JOIN scans s ON f.scan_id = s.id WHERE s.project_id = @pid);
+            DELETE FROM methods WHERE file_id IN (
+                SELECT f.id FROM files f JOIN scans s ON f.scan_id = s.id WHERE s.project_id = @pid);
+            DELETE FROM files WHERE scan_id IN (SELECT id FROM scans WHERE project_id = @pid);
+            DELETE FROM project_docs WHERE scan_id IN (SELECT id FROM scans WHERE project_id = @pid);
+            DELETE FROM scans WHERE project_id = @pid;
+            DELETE FROM projects WHERE id = @pid;
+            """;
+        var deleted = cmd.ExecuteNonQuery();
+
+        tx.Commit();
+        return deleted > 0;
+    }
+
     public List<ScanInfo> GetProjectScans(long projectId, int limit = 10)
     {
         var list = new List<ScanInfo>();

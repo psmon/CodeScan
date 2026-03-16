@@ -34,10 +34,16 @@ if (-not (Test-Path $DeployPath)) {
 }
 
 # 3. Build & Publish (self-contained: .NET 런타임 없는 PC에서도 실행 가능)
-Write-Host "[2/4] Building Release (self-contained)..." -ForegroundColor Yellow
+Write-Host "[2/4] Restoring & Building Release (self-contained)..." -ForegroundColor Yellow
+dotnet restore "$ProjectDir\CodeScan.csproj" -r win-x64
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Restore failed!" -ForegroundColor Red
+    exit 1
+}
 dotnet publish "$ProjectDir\CodeScan.csproj" `
     -c Release `
     -o $DeployPath `
+    --no-restore `
     --self-contained `
     -r win-x64 `
     -p:PublishAot=false `

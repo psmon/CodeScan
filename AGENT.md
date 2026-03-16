@@ -45,8 +45,10 @@ CodeScan/
 │   ├── ListCommand.cs               # list: scan + analyze + index to DB
 │   ├── SearchCommand.cs             # search: hybrid FTS5 + git log
 │   ├── ProjectsCommand.cs           # projects: list indexed projects
-│   ├── ProjectCommand.cs            # project: show project detail info
-│   └── ProjectAddInfoCommand.cs     # project-addinfo: add description
+│   ├── ProjectCommand.cs            # project: show project info (summary/detail)
+│   ├── ProjectAddInfoCommand.cs     # project-addinfo: add description
+│   ├── ProjectUpdateCommand.cs      # project-update: update path/addinfo
+│   └── ProjectDeleteCommand.cs      # project-delete: remove project from DB
 │
 ├── Models/
 │   ├── FileEntry.cs                 # File/dir info (path, size, methods, comments)
@@ -77,14 +79,17 @@ CodeScan/
 ## CLI Commands
 
 ```
-codescan v0.3.0 - Code Scanner & Indexer
+codescan v0.3.9 - Code Scanner & Indexer
 
 Commands:
+  scan [path]                  Scan & register project (= list --detail --tree --stats)
   list <path>                  Scan directory, analyze, and index to DB
   search <query>               Search indexed methods, files, and docs
   projects                     List all indexed projects
-  project <id>                 Show project detail info
+  project <id> [--detail]      Show project info (summary / detail)
   project-addinfo <id> <text>  Add description to a project
+  project-update <id> [opts]   Update project fields (path, addinfo)
+  project-delete <id>          Delete a project from DB
   tui                          Interactive TUI mode (user mode)
   help [command]               Show help
 
@@ -116,13 +121,20 @@ Global Options:
 
 ### `project` Command
 
-Shows detailed information for a specific project by ID:
-- Project path, file/dir count, total size
-- Method and comment counts from latest scan
-- Project documentation files found
-- AddInfo (additional description) status
+Shows project information. Two modes:
+
+**Summary mode** (default): `codescan project <id>`
+- Project path, file/dir count, total size, scan date
+- Method/comment counts, extensions breakdown, authors
+- AddInfo (description) if set
+
+**Detail mode**: `codescan project <id> --detail`
+- All summary info plus:
+- Project documentation files (README, AGENT.md, etc.)
+- Full file list
+- All methods grouped by file (with git blame)
+- All comments grouped by file
 - Scan history
-- If no addinfo exists, prompts user to add one (useful for LLM context)
 
 ### `project-addinfo` Command
 
@@ -130,6 +142,25 @@ Adds or replaces a single description for a project. Only one description per pr
 
 ```bash
 codescan project-addinfo <id> "description text"
+```
+
+### `project-update` Command
+
+Updates specific fields of a registered project without re-scanning.
+
+```bash
+codescan project-update <id> --path <new-path>       # Update root path
+codescan project-update <id> --addinfo <text>         # Update description
+codescan project-update <id> --path D:\New --addinfo "New desc"  # Both
+```
+
+### `project-delete` Command
+
+Removes a project and all its scan data from the database. Source files on disk are NOT affected.
+
+```bash
+codescan project-delete <id>           # With confirmation prompt
+codescan project-delete <id> --force   # Skip confirmation
 ```
 
 ### Examples
@@ -151,11 +182,22 @@ codescan search "TODO" --project 2 --type comment
 # View indexed projects
 codescan projects
 
-# View project detail
+# View project summary
 codescan project 1
+
+# View project full detail
+codescan project 1 --detail
 
 # Add project description
 codescan project-addinfo 1 "Main web API backend service"
+
+# Update project fields
+codescan project-update 1 --path D:\Code\NewLocation
+codescan project-update 1 --addinfo "Updated description"
+
+# Delete project from DB
+codescan project-delete 1
+codescan project-delete 1 --force
 
 # Interactive TUI
 codescan tui
@@ -263,7 +305,7 @@ RootSelect ──→ DirBrowse ──→ ScanOptions ──→ Scanning ──�
     │                                            ↑            │
     │                                            └────────────┘
     ├──→ [Search] ──→ SearchInput ──→ SearchResults
-    └──→ [Projects] ──→ Project list ──→ ProjectDetail ──→ AddInfo
+    └──→ [Projects] ──→ Project list ──→ ProjectDetail ──→ AddInfo / UpdatePath / Delete
 ```
 
 ### Key Bindings
@@ -282,6 +324,8 @@ RootSelect ──→ DirBrowse ──→ ScanOptions ──→ Scanning ──�
 - **Projects**: List indexed projects with addinfo status indicator
 - **Project Detail**: View full project info (stats, methods, comments, docs, addinfo, scan history)
 - **AddInfo**: Add/edit project description from within TUI
+- **Update Path**: Change project root path from within TUI
+- **Delete Project**: Remove project from DB with confirmation dialog
 
 ### Background Scanning
 Scan runs in `Task.Run()`. Progress streams to UI via `Application.Invoke()` wrapped in `SafeInvoke()` (never throws). Mouse input disabled at OS level via `kernel32.dll SetConsoleMode`.
@@ -319,11 +363,22 @@ dotnet run -- search "SSE" --project 1
 # View projects
 dotnet run -- projects
 
-# View project detail
+# View project summary
 dotnet run -- project 1
+
+# View project full detail
+dotnet run -- project 1 --detail
 
 # Add project description
 dotnet run -- project-addinfo 1 "My project description"
+
+# Update project fields
+dotnet run -- project-update 1 --path D:\Code\NewPath
+dotnet run -- project-update 1 --addinfo "Updated description"
+
+# Delete project
+dotnet run -- project-delete 1
+dotnet run -- project-delete 1 --force
 
 # TUI
 dotnet run -- tui

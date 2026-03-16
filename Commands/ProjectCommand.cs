@@ -11,7 +11,7 @@ public sealed class ProjectCommand
         _db = db;
     }
 
-    public int Execute(long projectId)
+    public int Execute(long projectId, bool detail = false)
     {
         var project = _db.GetProject(projectId);
         if (project == null)
@@ -21,7 +21,7 @@ public sealed class ProjectCommand
             return 1;
         }
 
-        // === Summary ===
+        // === Summary (always shown) ===
         Console.WriteLine($"=== Project #{project.Id} ===\n");
         Console.WriteLine($"  Path:       {project.RootPath}");
         Console.WriteLine($"  Files:      {project.FileCount}");
@@ -57,6 +57,26 @@ public sealed class ProjectCommand
                 Console.WriteLine($"  {a}");
         }
 
+        if (!detail)
+        {
+            // Summary mode: show hint for detail
+            Console.WriteLine();
+            Console.WriteLine($"Use '--detail' for full info (files, methods, comments, docs, scan history):");
+            Console.WriteLine($"  codescan project {projectId} --detail");
+
+            if (string.IsNullOrWhiteSpace(project.AddInfo))
+            {
+                Console.WriteLine();
+                Console.WriteLine("Tip: No description set. Add one to help understand this project.");
+                Console.WriteLine($"  codescan project-addinfo {projectId} \"Project description here\"");
+            }
+
+            Console.WriteLine();
+            return 0;
+        }
+
+        // === Detail mode: full info ===
+
         // === Project Docs ===
         var docs = _db.GetProjectDocContents(projectId);
         if (docs.Count > 0)
@@ -65,7 +85,6 @@ public sealed class ProjectCommand
             foreach (var doc in docs)
             {
                 Console.WriteLine($"\n  [{doc.DocPath}]");
-                // Show first 30 lines of doc content
                 var lines = doc.Content.Split('\n');
                 var showLines = Math.Min(lines.Length, 30);
                 for (int i = 0; i < showLines; i++)

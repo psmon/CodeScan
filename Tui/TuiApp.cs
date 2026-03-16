@@ -123,6 +123,11 @@ public class MainView : Toplevel
     private readonly TextField _txtAddInfo;
     private readonly Button _btnAddInfo;
 
+    // update path controls
+    private readonly Label _lblUpdatePath;
+    private readonly TextField _txtUpdatePath;
+    private readonly Button _btnUpdatePath;
+
     private ObservableCollection<string> _listItems = [];
     private List<string> _dirEntries = [];
 
@@ -294,10 +299,33 @@ public class MainView : Toplevel
         };
         _btnAddInfo.Accepting += OnSaveAddInfo;
 
+        // Update Path UI (hidden by default)
+        _lblUpdatePath = new Label
+        {
+            Text = "New project path:",
+            X = 3, Y = 4,
+            Visible = false
+        };
+        _txtUpdatePath = new TextField
+        {
+            Text = " ",
+            X = 3, Y = 5,
+            Width = Dim.Fill(4),
+            Visible = false
+        };
+        _btnUpdatePath = new Button
+        {
+            Text = ">>> Update Path <<<",
+            X = 3, Y = 7,
+            Visible = false
+        };
+        _btnUpdatePath.Accepting += OnUpdatePath;
+
         Add(_titleLabel, _pathLabel, _hintLabel, _btnBack, _listView, _resultView,
             _chkTree, _chkDetail, _chkStats, _lblInclude, _txtInclude, _btnExecute,
             _lblSearch, _txtSearch, _btnSearch,
-            _lblAddInfo, _txtAddInfo, _btnAddInfo);
+            _lblAddInfo, _txtAddInfo, _btnAddInfo,
+            _lblUpdatePath, _txtUpdatePath, _btnUpdatePath);
 
         // Application-level key intercept - fires BEFORE any view processes keys
         Application.KeyDown += OnGlobalKeyDown;
@@ -330,7 +358,7 @@ public class MainView : Toplevel
         }
 
         // ignore when typing in text field
-        if (_txtInclude.HasFocus || _txtSearch.HasFocus || _txtAddInfo.HasFocus) return;
+        if (_txtInclude.HasFocus || _txtSearch.HasFocus || _txtAddInfo.HasFocus || _txtUpdatePath.HasFocus) return;
 
         if (IsQKey(key))
         {
@@ -449,6 +477,8 @@ public class MainView : Toplevel
         {
             if (selected is "__PROJECTS__") { ShowProjects(); return; }
             if (selected is "__ADDINFO__") { ShowAddInfoInput(); return; }
+            if (selected is "__UPDATEPATH__") { ShowUpdatePathInput(); return; }
+            if (selected is "__DELETE__") { ConfirmDeleteProject(); return; }
             if (selected is "__HOME__") { ShowRootSelect(); return; }
             if (Directory.Exists(selected))
             {
@@ -918,6 +948,12 @@ public class MainView : Toplevel
 
             _listItems.Add("  ----------------");
             _dirEntries.Add("__SEP__");
+            _listItems.Add("  [Update Path] - Change project root path");
+            _dirEntries.Add("__UPDATEPATH__");
+            _listItems.Add("  [Delete Project] - Remove from DB");
+            _dirEntries.Add("__DELETE__");
+            _listItems.Add("  ----------------");
+            _dirEntries.Add("__SEP__");
             _listItems.Add("  [Back to Projects]");
             _dirEntries.Add("__PROJECTS__");
             _listItems.Add("  [Home]");
@@ -986,6 +1022,86 @@ public class MainView : Toplevel
             _btnAddInfo.Visible = false;
 
             ShowProjectDetail(_currentProjectId);
+        }
+        catch (Exception ex)
+        {
+            _pathLabel.Text = $"Error: {ex.Message}";
+        }
+    }
+
+    // ========================
+    // Update Path
+    // ========================
+    private void ShowUpdatePathInput()
+    {
+        _titleLabel.Text = $"Update Path - Project #{_currentProjectId}";
+        _pathLabel.Text = "Enter the new root path for this project";
+        _hintLabel.Text = "[Enter] Save  [Q] Back";
+
+        _listView.Visible = false;
+        _resultView.Visible = false;
+        HideOptions();
+
+        // Load existing path
+        try
+        {
+            using var db = new SqliteStore(AppPaths.DbPath);
+            var project = db.GetProject(_currentProjectId);
+            _txtUpdatePath.Text = project?.RootPath ?? " ";
+        }
+        catch { _txtUpdatePath.Text = " "; }
+
+        _lblUpdatePath.Visible = true;
+        _txtUpdatePath.Visible = true;
+        _btnUpdatePath.Visible = true;
+
+        _txtUpdatePath.SetFocus();
+    }
+
+    private void OnUpdatePath(object? sender, CommandEventArgs e)
+    {
+        var newPath = _txtUpdatePath.Text?.ToString()?.Trim() ?? "";
+        if (string.IsNullOrEmpty(newPath)) return;
+
+        try
+        {
+            var fullPath = Path.GetFullPath(newPath);
+            using var db = new SqliteStore(AppPaths.DbPath);
+            db.SetProjectPath(_currentProjectId, fullPath);
+
+            _lblUpdatePath.Visible = false;
+            _txtUpdatePath.Visible = false;
+            _btnUpdatePath.Visible = false;
+
+            ShowProjectDetail(_currentProjectId);
+        }
+        catch (Exception ex)
+        {
+            _pathLabel.Text = $"Error: {ex.Message}";
+        }
+    }
+
+    // ========================
+    // Delete Project
+    // ========================
+    private void ConfirmDeleteProject()
+    {
+        try
+        {
+            using var db = new SqliteStore(AppPaths.DbPath);
+            var project = db.GetProject(_currentProjectId);
+            if (project == null) return;
+
+            var result = MessageBox.Query(
+                "Delete Project",
+                $"Delete project #{_currentProjectId}?\n{project.RootPath}\n\nThis removes all scan data from DB.\nSource files on disk are NOT affected.",
+                "Delete", "Cancel");
+
+            if (result == 0) // Delete
+            {
+                db.DeleteProject(_currentProjectId);
+                ShowProjects();
+            }
         }
         catch (Exception ex)
         {
@@ -1133,6 +1249,9 @@ public class MainView : Toplevel
         _lblAddInfo.Visible = false;
         _txtAddInfo.Visible = false;
         _btnAddInfo.Visible = false;
+        _lblUpdatePath.Visible = false;
+        _txtUpdatePath.Visible = false;
+        _btnUpdatePath.Visible = false;
     }
 
     private static bool IsDefaultExcluded(string dirName)
