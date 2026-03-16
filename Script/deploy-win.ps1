@@ -33,13 +33,15 @@ if (-not (Test-Path $DeployPath)) {
     New-Item -ItemType Directory -Path $DeployPath -Force | Out-Null
 }
 
-# 3. Build & Publish (framework-dependent, no trimming)
-Write-Host "[2/4] Building Release..." -ForegroundColor Yellow
+# 3. Build & Publish (self-contained: .NET 런타임 없는 PC에서도 실행 가능)
+Write-Host "[2/4] Building Release (self-contained)..." -ForegroundColor Yellow
 dotnet publish "$ProjectDir\CodeScan.csproj" `
     -c Release `
     -o $DeployPath `
-    --no-self-contained `
+    --self-contained `
+    -r win-x64 `
     -p:PublishAot=false `
+    -p:PublishSingleFile=true `
     -p:TrimMode="" `
     -p:IlcOptimizationPreference=""
 if ($LASTEXITCODE -ne 0) {
@@ -62,20 +64,35 @@ if (Test-Path $ExePath) {
     }
 }
 
-# 5. Add to PATH (User scope, persistent)
-$CurrentPath = [Environment]::GetEnvironmentVariable("Path", "User")
-if ($CurrentPath -split ";" | Where-Object { $_.Trim() -eq $DeployPath }) {
-    Write-Host "[4/4] PATH already contains: $DeployPath" -ForegroundColor DarkGray
-} else {
-    $NewPath = "$CurrentPath;$DeployPath"
-    # Use Registry API to preserve REG_EXPAND_SZ (SetEnvironmentVariable breaks it to REG_SZ)
-    $regKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment", $true)
-    $regKey.SetValue("Path", $NewPath, [Microsoft.Win32.RegistryValueKind]::ExpandString)
-    $regKey.Close()
-    $env:Path = "$env:Path;$DeployPath"
-    Write-Host "[4/4] Added to user PATH: $DeployPath" -ForegroundColor Green
-    Write-Host "      Restart terminal for PATH to take effect globally." -ForegroundColor DarkGray
+# 5. Add to PATH via PowerShell Profile (no registry manipulation)
+$ProfilePath = $PROFILE.CurrentUserAllHosts  # ~\Documents\PowerShell\profile.ps1
+$PathLine = "`$env:Path += `";$DeployPath`""
+$MarkerComment = "# [CodeScan] PATH"
+
+$NeedAdd = $true
+if (Test-Path $ProfilePath) {
+    $ProfileContent = Get-Content $ProfilePath -Raw
+    if ($ProfileContent -match [regex]::Escape($MarkerComment)) {
+        $NeedAdd = $false
+    }
 }
+
+if ($NeedAdd) {
+    # Ensure profile directory exists
+    $ProfileDir = Split-Path $ProfilePath -Parent
+    if (-not (Test-Path $ProfileDir)) {
+        New-Item -ItemType Directory -Path $ProfileDir -Force | Out-Null
+    }
+    # Append PATH entry to profile
+    Add-Content -Path $ProfilePath -Value "`n$MarkerComment`n$PathLine"
+    Write-Host "[4/4] Added to PowerShell Profile: $ProfilePath" -ForegroundColor Green
+    Write-Host "      New PowerShell sessions will recognize 'codescan' automatically." -ForegroundColor DarkGray
+} else {
+    Write-Host "[4/4] PowerShell Profile already contains CodeScan PATH." -ForegroundColor DarkGray
+}
+
+# Apply to current session immediately
+$env:Path += ";$DeployPath"
 
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Cyan
