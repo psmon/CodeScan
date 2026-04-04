@@ -17,11 +17,16 @@ public static class CommentExtractor
         string[] lines;
         try { lines = File.ReadAllLines(filePath); }
         catch { return []; }
+        return Extract(lines, ext);
+    }
 
+    public static List<CommentBlock> Extract(string[] lines, string extension)
+    {
+        var ext = extension.ToLowerInvariant();
         return ext switch
         {
             ".py" => ExtractPython(lines),
-            _ => ExtractCStyle(lines) // C#, Java, Kotlin, JS, TS, PHP all use // and /* */
+            _ => ExtractCStyle(lines)
         };
     }
 

@@ -20,15 +20,24 @@ public static partial class SourceAnalyzer
     public static List<MethodEntry> ExtractMethods(string filePath)
     {
         var ext = Path.GetExtension(filePath).ToLowerInvariant();
+        string[] lines;
+        try { lines = File.ReadAllLines(filePath); }
+        catch { return []; }
+        return ExtractMethods(lines, ext);
+    }
+
+    public static List<MethodEntry> ExtractMethods(string[] lines, string extension)
+    {
+        var ext = extension.ToLowerInvariant();
         return ext switch
         {
-            ".cs" => ExtractWithBraces(filePath, CsClassPattern(), CsMethodPattern(), CsControlFlow()),
-            ".java" => ExtractWithBraces(filePath, JavaClassPattern(), JavaMethodPattern(), JavaControlFlow()),
-            ".kt" or ".kts" => ExtractWithBraces(filePath, KtClassPattern(), KtMethodPattern(), KtControlFlow()),
-            ".js" or ".jsx" => ExtractJsTsMethods(filePath),
-            ".ts" or ".tsx" => ExtractJsTsMethods(filePath),
-            ".php" => ExtractWithBraces(filePath, PhpClassPattern(), PhpMethodPattern(), PhpControlFlow()),
-            ".py" => ExtractPythonMethods(filePath),
+            ".cs" => ExtractWithBraces(lines, CsClassPattern(), CsMethodPattern(), CsControlFlow()),
+            ".java" => ExtractWithBraces(lines, JavaClassPattern(), JavaMethodPattern(), JavaControlFlow()),
+            ".kt" or ".kts" => ExtractWithBraces(lines, KtClassPattern(), KtMethodPattern(), KtControlFlow()),
+            ".js" or ".jsx" => ExtractJsTsMethods(lines),
+            ".ts" or ".tsx" => ExtractJsTsMethods(lines),
+            ".php" => ExtractWithBraces(lines, PhpClassPattern(), PhpMethodPattern(), PhpControlFlow()),
+            ".py" => ExtractPythonMethods(lines),
             _ => []
         };
     }
@@ -37,12 +46,9 @@ public static partial class SourceAnalyzer
     // Brace-based languages (C#, Java, Kotlin, PHP)
     // ============================
     private static List<MethodEntry> ExtractWithBraces(
-        string filePath, Regex classPattern, Regex methodPattern, Regex controlFlow)
+        string[] lines, Regex classPattern, Regex methodPattern, Regex controlFlow)
     {
         var methods = new List<MethodEntry>();
-        string[] lines;
-        try { lines = File.ReadAllLines(filePath); }
-        catch { return methods; }
 
         var currentClass = "Global";
         var classStack = new Stack<string>();
@@ -95,12 +101,9 @@ public static partial class SourceAnalyzer
     // ============================
     // JavaScript / TypeScript
     // ============================
-    private static List<MethodEntry> ExtractJsTsMethods(string filePath)
+    private static List<MethodEntry> ExtractJsTsMethods(string[] lines)
     {
         var methods = new List<MethodEntry>();
-        string[] lines;
-        try { lines = File.ReadAllLines(filePath); }
-        catch { return methods; }
 
         var currentClass = "Global";
         var classStack = new Stack<string>();
@@ -187,12 +190,9 @@ public static partial class SourceAnalyzer
     // ============================
     // Python (indentation-based)
     // ============================
-    private static List<MethodEntry> ExtractPythonMethods(string filePath)
+    private static List<MethodEntry> ExtractPythonMethods(string[] lines)
     {
         var methods = new List<MethodEntry>();
-        string[] lines;
-        try { lines = File.ReadAllLines(filePath); }
-        catch { return methods; }
 
         var currentClass = "Global";
 

@@ -19,6 +19,7 @@
 
     <ItemGroup>
         <Folder Include="Prompt\TestFileDB\" />
+        <Compile Remove="Tests\**" />
     </ItemGroup>
 
     <ItemGroup>
