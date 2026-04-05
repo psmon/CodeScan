@@ -18,7 +18,7 @@ publish/
 .idea/
 
 # Local AI/tooling folders
-.claude/
+.claude/settings.local.json
 
 # Test and coverage output
 TestResults/
