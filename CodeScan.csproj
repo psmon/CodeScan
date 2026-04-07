@@ -18,6 +18,10 @@
     </PropertyGroup>
 
     <ItemGroup>
+        <InternalsVisibleTo Include="CodeScan.Tests" />
+    </ItemGroup>
+
+    <ItemGroup>
         <Folder Include="Prompt\TestFileDB\" />
         <Compile Remove="Tests\**" />
     </ItemGroup>

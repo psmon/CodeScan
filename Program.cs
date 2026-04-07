@@ -289,24 +289,48 @@ class Program
 
         string? newPath = null;
         string? newAddInfo = null;
+        bool sourceUpdate = false;
+
+        // First pass: extract --source and --path (non-greedy flags)
+        var addinfoArgs = new List<string>();
+        bool collectingAddinfo = false;
 
         for (int i = 1; i < args.Length; i++)
         {
+            if (collectingAddinfo)
+            {
+                addinfoArgs.Add(args[i]);
+                continue;
+            }
+
             switch (args[i])
             {
                 case "--path" when i + 1 < args.Length:
                     newPath = args[++i];
                     break;
+                case "--source":
+                    sourceUpdate = true;
+                    break;
                 case "--addinfo" when i + 1 < args.Length:
-                    newAddInfo = string.Join(" ", args[(i + 1)..]);
-                    i = args.Length; // consume all remaining
+                    collectingAddinfo = true;
                     break;
             }
         }
 
+        if (addinfoArgs.Count > 0)
+        {
+            // Filter out any flags that got swept in
+            var textParts = addinfoArgs.Where(a => a is not "--source" and not "--path").ToList();
+            if (textParts.Count > 0)
+                newAddInfo = string.Join(" ", textParts);
+            // Check if --source was in the addinfo tail
+            if (addinfoArgs.Contains("--source"))
+                sourceUpdate = true;
+        }
+
         using var db = OpenDb();
         var cmd = new ProjectUpdateCommand(db);
-        return cmd.Execute(projectId, newPath, newAddInfo);
+        return cmd.Execute(projectId, newPath, newAddInfo, sourceUpdate);
     }
 
     static int RunProjectDelete(string[] args)
@@ -418,7 +442,7 @@ class Program
           projects                     List all indexed projects
           project <id> [--detail]      Show project info (summary / detail)
           project-addinfo <id> <text>  Add description to a project
-          project-update <id> [opts]   Update project fields (path, addinfo)
+          project-update <id> [opts]   Update project fields (path, addinfo, source)
           project-delete <id>          Delete a project from DB
           tui                          Interactive TUI mode
           help [command]               Show help
@@ -441,6 +465,7 @@ class Program
           codescan project 1 --detail              View full project detail
           codescan project-addinfo 1 "description" Add project description
           codescan project-update 1 --path D:\new  Update project path
+          codescan project-update 1 --source       Full rescan (git pull + scan)
           codescan project-delete 1                Delete project from DB
           codescan search "HttpClient"             Search across all projects
         """);
@@ -605,16 +630,24 @@ class Program
 
         Usage: codescan project-update <id> [options]
 
-        Updates specific fields of a registered project without re-scanning.
+        Updates specific fields of a registered project.
 
         Options:
           --path <path>        Update the project root path
           --addinfo <text>     Update the project description
+          --source             Full source update (git pull + rescan)
           -h, --help           Show help
+
+        --source performs:
+          1. Check if git is available for the project
+          2. Run 'git pull' to fetch latest code (skipped with warning if fails)
+          3. Full scan: directory traversal + method/comment analysis + git blame
+          4. Update DB index with new scan results
 
         Examples:
           codescan project-update 1 --path D:\Code\NewLocation
           codescan project-update 1 --addinfo "Updated project description"
+          codescan project-update 1 --source
           codescan project-update 1 --path D:\New --addinfo "New desc"
         """);
     }

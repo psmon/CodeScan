@@ -88,8 +88,9 @@ public class MainView : Toplevel
     private readonly Stack<string> _pathHistory = new();
     private volatile bool _scanning = false;
 
-    // current project context (for project detail/addinfo)
+    // current project context (for project detail/addinfo/source update)
     private long _currentProjectId = 0;
+    private bool _resultsFromSourceUpdate = false;
 
     // scan options
     private bool _optTree = true;
@@ -401,7 +402,13 @@ public class MainView : Toplevel
                 break;
 
             case Mode.Results:
-                ShowScanOptions();
+                if (_resultsFromSourceUpdate)
+                {
+                    _resultsFromSourceUpdate = false;
+                    ShowProjectDetail(_currentProjectId);
+                }
+                else
+                    ShowScanOptions();
                 break;
 
             case Mode.SearchInput:
@@ -478,6 +485,7 @@ public class MainView : Toplevel
             if (selected is "__PROJECTS__") { ShowProjects(); return; }
             if (selected is "__ADDINFO__") { ShowAddInfoInput(); return; }
             if (selected is "__UPDATEPATH__") { ShowUpdatePathInput(); return; }
+            if (selected is "__UPDATESOURCE__") { ExecuteSourceUpdate(); return; }
             if (selected is "__DELETE__") { ConfirmDeleteProject(); return; }
             if (selected is "__HOME__") { ShowRootSelect(); return; }
             if (Directory.Exists(selected))
@@ -948,6 +956,8 @@ public class MainView : Toplevel
 
             _listItems.Add("  ----------------");
             _dirEntries.Add("__SEP__");
+            _listItems.Add("  [Update Source] - Git pull + full rescan");
+            _dirEntries.Add("__UPDATESOURCE__");
             _listItems.Add("  [Update Path] - Change project root path");
             _dirEntries.Add("__UPDATEPATH__");
             _listItems.Add("  [Delete Project] - Remove from DB");
@@ -1079,6 +1089,68 @@ public class MainView : Toplevel
         {
             _pathLabel.Text = $"Error: {ex.Message}";
         }
+    }
+
+    // ========================
+    // Source Update
+    // ========================
+    private void ExecuteSourceUpdate()
+    {
+        if (_scanning) return;
+
+        _scanning = true;
+        _resultsFromSourceUpdate = true;
+        _mode = Mode.Scanning;
+        HideOptions();
+        _listView.Visible = false;
+        _titleLabel.Text = $"Source Update: Project #{_currentProjectId}";
+        _hintLabel.Text = "[Q] Cancel";
+        _resultView.Text = "Starting source update...\n";
+        _resultView.Visible = true;
+
+        var projectId = _currentProjectId;
+
+        Task.Run(() =>
+        {
+            try
+            {
+                using var db = new SqliteStore(AppPaths.DbPath);
+                var svc = new SourceUpdateService(db, msg => AppendResult(msg + "\n"));
+                var result = svc.Execute(projectId);
+
+                SafeInvoke(() =>
+                {
+                    if (result.Success)
+                    {
+                        _resultView.Text += $"\n=== Source update complete ===\n";
+                        _resultView.Text += $"Files: {result.FileCount}, Methods: {result.MethodCount}\n";
+                        if (result.GitPullWarning != null)
+                            _resultView.Text += $"\n{result.GitPullWarning}\n";
+                    }
+                    else
+                    {
+                        _resultView.Text += $"\nError: {result.ErrorMessage}\n";
+                    }
+
+                    _scanning = false;
+                    _mode = Mode.Results;
+                    _titleLabel.Text = result.Success ? "Source Update Complete" : "Source Update Failed";
+                    _hintLabel.Text = "[Q] Back to project  [H] Home";
+                    _resultView.MoveEnd();
+                    _resultView.SetFocus();
+                });
+            }
+            catch (Exception ex)
+            {
+                SafeInvoke(() =>
+                {
+                    _resultView.Text += $"\nError: {ex.Message}\n";
+                    _scanning = false;
+                    _mode = Mode.Results;
+                    _hintLabel.Text = "[Q] Back  [H] Home";
+                });
+            }
+        });
     }
 
     // ========================

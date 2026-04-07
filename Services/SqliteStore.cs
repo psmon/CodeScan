@@ -616,9 +616,13 @@ public sealed class SqliteStore : IResultStore, IDisposable
     // ========================
     // Search
     // ========================
+    // 검색 전략:
+    //   1차: FTS5 전문검색 (trigram tokenizer, 한국어 부분문자열 매칭 지원)
+    //   2차: FTS5 결과 0건이면 LIKE 폴백 (짧은 쿼리나 FTS 미지원 환경)
+    // 정렬: 최신 스캔 우선 (scan_id DESC) + 관련도 (FTS rank)
+    // 범위: 전체 스캔 데이터 대상 (최신 한정 없음 — 과거 스캔에만 존재하는 데이터도 검색 가능)
     public List<SearchResult> Search(string query, string? type = null, int limit = 30, long? projectId = null)
     {
-        // Try FTS5 first, fallback to LIKE for short queries (< 3 chars per term)
         var results = SearchFts(query, type, limit, projectId);
         if (results.Count == 0)
             results = SearchLike(query, type, limit, projectId);
@@ -639,7 +643,7 @@ public sealed class SqliteStore : IResultStore, IDisposable
                 SELECT type, name, snippet(search_index, 2, '>>>', '<<<', '...', 40) as excerpt, path, scan_id
                 FROM search_index
                 WHERE search_index MATCH @q {typeFilter} {projectFilter}
-                ORDER BY rank
+                ORDER BY scan_id DESC, rank
                 LIMIT @lim
                 """;
             var safeQuery = string.Join(" ", query.Split(' ', StringSplitOptions.RemoveEmptyEntries)
@@ -679,6 +683,7 @@ public sealed class SqliteStore : IResultStore, IDisposable
             SELECT type, name, content, path, scan_id
             FROM search_index
             WHERE (name LIKE @q OR content LIKE @q) {typeFilter} {projectFilter}
+            ORDER BY scan_id DESC
             LIMIT @lim
             """;
         cmd.Parameters.AddWithValue("@q", like);

@@ -11,7 +11,7 @@ public sealed class ProjectUpdateCommand
         _db = db;
     }
 
-    public int Execute(long projectId, string? newPath, string? newAddInfo)
+    public int Execute(long projectId, string? newPath, string? newAddInfo, bool sourceUpdate = false)
     {
         var project = _db.GetProject(projectId);
         if (project == null)
@@ -38,12 +38,28 @@ public sealed class ProjectUpdateCommand
             updated = true;
         }
 
+        if (sourceUpdate)
+        {
+            Console.WriteLine($"Source update: project #{projectId} ({project.RootPath})");
+            var svc = new SourceUpdateService(_db, msg => Console.WriteLine(msg));
+            var result = svc.Execute(projectId, project.RootPath);
+
+            if (!result.Success)
+            {
+                Console.Error.WriteLine($"Error: {result.ErrorMessage}");
+                return 1;
+            }
+
+            Console.WriteLine($"Source update complete: {result.FileCount} files, {result.MethodCount} methods indexed.");
+            updated = true;
+        }
+
         if (updated)
             Console.WriteLine($"Project #{projectId} updated.");
         else
         {
             Console.Error.WriteLine("Error: no fields specified to update.");
-            Console.Error.WriteLine("Usage: codescan project-update <id> [--path <path>] [--addinfo <text>]");
+            Console.Error.WriteLine("Usage: codescan project-update <id> [--path <path>] [--addinfo <text>] [--source]");
             return 1;
         }
 
