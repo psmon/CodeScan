@@ -10,6 +10,8 @@ public static class AppPaths
 
     public static string LogDir => Path.Combine(BaseDir, "logs");
 
+    public static string RunDir => Path.Combine(BaseDir, "run");
+
     public static string DbPath
     {
         get
@@ -23,5 +25,11 @@ public static class AppPaths
     {
         Directory.CreateDirectory(LogDir);
         return LogDir;
+    }
+
+    public static string GetRunDir()
+    {
+        Directory.CreateDirectory(RunDir);
+        return RunDir;
     }
 }

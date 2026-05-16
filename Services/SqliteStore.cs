@@ -87,6 +87,34 @@ public sealed class SqliteStore : IResultStore, IDisposable
             CREATE INDEX IF NOT EXISTS idx_methods_name ON methods(method_name);
             CREATE INDEX IF NOT EXISTS idx_methods_author ON methods(last_author);
             CREATE INDEX IF NOT EXISTS idx_files_ext ON files(extension);
+
+            CREATE TABLE IF NOT EXISTS graph_nodes (
+                id INTEGER PRIMARY KEY,
+                scan_id INTEGER NOT NULL REFERENCES scans(id),
+                kind TEXT NOT NULL,
+                stable_key TEXT NOT NULL,
+                label TEXT NOT NULL,
+                path TEXT,
+                detail TEXT,
+                UNIQUE(scan_id, stable_key)
+            );
+
+            CREATE TABLE IF NOT EXISTS graph_edges (
+                id INTEGER PRIMARY KEY,
+                scan_id INTEGER NOT NULL REFERENCES scans(id),
+                from_node_id INTEGER NOT NULL REFERENCES graph_nodes(id),
+                to_node_id INTEGER NOT NULL REFERENCES graph_nodes(id),
+                kind TEXT NOT NULL,
+                label TEXT,
+                UNIQUE(scan_id, from_node_id, to_node_id, kind)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_graph_nodes_scan ON graph_nodes(scan_id);
+            CREATE INDEX IF NOT EXISTS idx_graph_nodes_kind ON graph_nodes(kind);
+            CREATE INDEX IF NOT EXISTS idx_graph_nodes_label ON graph_nodes(label);
+            CREATE INDEX IF NOT EXISTS idx_graph_edges_scan ON graph_edges(scan_id);
+            CREATE INDEX IF NOT EXISTS idx_graph_edges_from ON graph_edges(from_node_id);
+            CREATE INDEX IF NOT EXISTS idx_graph_edges_to ON graph_edges(to_node_id);
             """;
         cmd.ExecuteNonQuery();
 
@@ -234,6 +262,12 @@ public sealed class SqliteStore : IResultStore, IDisposable
         cmd.CommandText = "DELETE FROM search_index WHERE scan_id IN (SELECT id FROM scans WHERE project_id = @pid)";
         cmd.Parameters.AddWithValue("@pid", projectId);
         try { cmd.ExecuteNonQuery(); } catch { /* FTS may not exist */ }
+
+        cmd.CommandText = "DELETE FROM graph_edges WHERE scan_id IN (SELECT id FROM scans WHERE project_id = @pid)";
+        cmd.ExecuteNonQuery();
+
+        cmd.CommandText = "DELETE FROM graph_nodes WHERE scan_id IN (SELECT id FROM scans WHERE project_id = @pid)";
+        cmd.ExecuteNonQuery();
 
         // Delete comments -> methods -> files -> project_docs -> scans -> project
         cmd.CommandText = """
@@ -519,6 +553,15 @@ public sealed class SqliteStore : IResultStore, IDisposable
         scanCmd.ExecuteNonQuery();
 
         var scanId = GetLastId();
+        var project = GetProject(projectId);
+        var projectNodeId = UpsertGraphNode(
+            scanId,
+            $"project:{projectId}",
+            "project",
+            project != null ? Path.GetFileName(project.RootPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)) : $"Project {projectId}",
+            project?.RootPath ?? "",
+            $"Project #{projectId}");
+        var pathNodeIds = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
 
         // Batch insert files + methods
         foreach (var entry in entries)
@@ -537,6 +580,22 @@ public sealed class SqliteStore : IResultStore, IDisposable
             fileCmd.Parameters.AddWithValue("@d", entry.Depth);
             fileCmd.ExecuteNonQuery();
             var fileId = GetLastId();
+
+            var entryKind = entry.IsDirectory ? "directory" : "file";
+            var entryNodeId = UpsertGraphNode(
+                scanId,
+                $"path:{entry.RelativePath}",
+                entryKind,
+                entry.Name,
+                entry.RelativePath,
+                entry.IsDirectory ? "Directory" : $"{entry.Extension} {entry.Size} bytes");
+            pathNodeIds[entry.RelativePath] = entryNodeId;
+
+            var parentNodeId = projectNodeId;
+            var parentPath = Path.GetDirectoryName(entry.RelativePath);
+            if (!string.IsNullOrEmpty(parentPath) && pathNodeIds.TryGetValue(parentPath, out var foundParentNodeId))
+                parentNodeId = foundParentNodeId;
+            InsertGraphEdge(scanId, parentNodeId, entryNodeId, "contains", "contains");
 
             if (entry.Methods.Count > 0)
             {
@@ -560,6 +619,40 @@ public sealed class SqliteStore : IResultStore, IDisposable
                     // FTS index
                     IndexForSearch(scanId, "method", m.MethodName,
                         m.LastCommitSummary ?? "", entry.RelativePath);
+
+                    var classNodeId = entryNodeId;
+                    if (!string.IsNullOrWhiteSpace(m.ClassName))
+                    {
+                        classNodeId = UpsertGraphNode(
+                            scanId,
+                            $"class:{entry.RelativePath}:{m.ClassName}",
+                            "class",
+                            m.ClassName,
+                            entry.RelativePath,
+                            $"Class in {entry.RelativePath}");
+                        InsertGraphEdge(scanId, entryNodeId, classNodeId, "contains", "contains");
+                    }
+
+                    var methodNodeId = UpsertGraphNode(
+                        scanId,
+                        $"method:{fileId}:{m.ClassName}:{m.MethodName}:{m.StartLine}",
+                        "method",
+                        string.IsNullOrWhiteSpace(m.ClassName) ? m.MethodName : $"{m.ClassName}.{m.MethodName}",
+                        entry.RelativePath,
+                        $"L{m.StartLine}-{m.EndLine} {m.LastCommitSummary ?? ""}".Trim());
+                    InsertGraphEdge(scanId, classNodeId, methodNodeId, "defines", "defines");
+
+                    if (!string.IsNullOrWhiteSpace(m.LastAuthor))
+                    {
+                        var authorNodeId = UpsertGraphNode(
+                            scanId,
+                            $"author:{m.LastAuthor.Trim().ToLowerInvariant()}",
+                            "author",
+                            m.LastAuthor.Trim(),
+                            "",
+                            "Git blame author");
+                        InsertGraphEdge(scanId, authorNodeId, methodNodeId, "authored", "authored");
+                    }
                 }
             }
 
@@ -584,6 +677,15 @@ public sealed class SqliteStore : IResultStore, IDisposable
                     // FTS: searchable by comment text, shows nearby code as excerpt
                     var searchContent = $"{c.Comment} | {c.NearbyCode}";
                     IndexForSearch(scanId, "comment", $"L{c.StartLine}", searchContent, entry.RelativePath);
+
+                    var commentNodeId = UpsertGraphNode(
+                        scanId,
+                        $"comment:{fileId}:{c.StartLine}",
+                        "comment",
+                        $"Comment L{c.StartLine}",
+                        entry.RelativePath,
+                        c.Comment.Length > 240 ? c.Comment[..240] : c.Comment);
+                    InsertGraphEdge(scanId, entryNodeId, commentNodeId, "has_comment", "comment");
                 }
             }
 
@@ -611,6 +713,27 @@ public sealed class SqliteStore : IResultStore, IDisposable
         cmd.ExecuteNonQuery();
 
         IndexForSearch(scanId, "doc", Path.GetFileName(docPath), content, docPath);
+
+        var projectId = GetProjectIdForScan(scanId);
+        if (projectId > 0)
+        {
+            var project = GetProject(projectId);
+            var projectNodeId = UpsertGraphNode(
+                scanId,
+                $"project:{projectId}",
+                "project",
+                project != null ? Path.GetFileName(project.RootPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)) : $"Project {projectId}",
+                project?.RootPath ?? "",
+                $"Project #{projectId}");
+            var docNodeId = UpsertGraphNode(
+                scanId,
+                $"doc:{docPath}",
+                "doc",
+                Path.GetFileName(docPath),
+                docPath,
+                content.Length > 240 ? content[..240] : content);
+            InsertGraphEdge(scanId, projectNodeId, docNodeId, "documents", "documents");
+        }
     }
 
     // ========================
@@ -725,6 +848,183 @@ public sealed class SqliteStore : IResultStore, IDisposable
     }
 
     // ========================
+    // Graph search
+    // ========================
+    public GraphData SearchGraph(string query, long? projectId = null, int depth = 1, int limit = 80)
+    {
+        depth = Math.Clamp(depth, 0, 4);
+        limit = Math.Clamp(limit, 1, 300);
+
+        var matchedIds = FindGraphNodeIds(query, projectId, limit);
+        if (matchedIds.Count == 0)
+            return new GraphData();
+
+        var selectedIds = new HashSet<long>(matchedIds);
+        var frontier = new HashSet<long>(matchedIds);
+
+        for (int i = 0; i < depth && selectedIds.Count < 300; i++)
+        {
+            var neighbors = GetGraphNeighborIds(frontier, projectId, 300 - selectedIds.Count);
+            neighbors.ExceptWith(selectedIds);
+            if (neighbors.Count == 0) break;
+            selectedIds.UnionWith(neighbors);
+            frontier = neighbors;
+        }
+
+        var nodes = GetGraphNodes(selectedIds);
+        var edges = GetGraphEdges(selectedIds, projectId);
+
+        return new GraphData { Nodes = nodes, Edges = edges };
+    }
+
+    private List<long> FindGraphNodeIds(string query, long? projectId, int limit)
+    {
+        var ids = new List<long>();
+        using var cmd = _conn.CreateCommand();
+        var projectFilter = projectId.HasValue
+            ? "AND n.scan_id IN (SELECT id FROM scans WHERE project_id = @pid)"
+            : "";
+        var latestFilter = projectId.HasValue
+            ? "AND n.scan_id = (SELECT MAX(id) FROM scans WHERE project_id = @pid)"
+            : "AND n.scan_id IN (SELECT MAX(id) FROM scans GROUP BY project_id)";
+        var hasQuery = !string.IsNullOrWhiteSpace(query);
+        var queryFilter = hasQuery
+            ? "AND (n.label LIKE @q OR n.path LIKE @q OR n.detail LIKE @q OR n.kind LIKE @q)"
+            : "";
+        cmd.CommandText = $"""
+            SELECT n.id
+            FROM graph_nodes n
+            WHERE 1 = 1 {projectFilter} {latestFilter} {queryFilter}
+            ORDER BY n.scan_id DESC,
+                     CASE n.kind
+                        WHEN 'project' THEN 0
+                        WHEN 'directory' THEN 1
+                        WHEN 'file' THEN 2
+                        WHEN 'class' THEN 3
+                        WHEN 'method' THEN 4
+                        ELSE 5
+                     END,
+                     n.label
+            LIMIT @lim
+            """;
+        cmd.Parameters.AddWithValue("@lim", limit);
+        if (projectId.HasValue) cmd.Parameters.AddWithValue("@pid", projectId.Value);
+        if (hasQuery) cmd.Parameters.AddWithValue("@q", $"%{query}%");
+
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            ids.Add(reader.GetInt64(0));
+        return ids;
+    }
+
+    private HashSet<long> GetGraphNeighborIds(HashSet<long> nodeIds, long? projectId, int limit)
+    {
+        var result = new HashSet<long>();
+        if (nodeIds.Count == 0 || limit <= 0) return result;
+
+        using var cmd = _conn.CreateCommand();
+        var inClause = AddIdParameters(cmd, nodeIds, "@n");
+        var projectFilter = projectId.HasValue
+            ? "AND e.scan_id IN (SELECT id FROM scans WHERE project_id = @pid)"
+            : "";
+        cmd.CommandText = $"""
+            SELECT e.from_node_id, e.to_node_id
+            FROM graph_edges e
+            WHERE (e.from_node_id IN ({inClause}) OR e.to_node_id IN ({inClause})) {projectFilter}
+            LIMIT @lim
+            """;
+        cmd.Parameters.AddWithValue("@lim", limit * 2);
+        if (projectId.HasValue) cmd.Parameters.AddWithValue("@pid", projectId.Value);
+
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read() && result.Count < limit)
+        {
+            result.Add(reader.GetInt64(0));
+            if (result.Count < limit)
+                result.Add(reader.GetInt64(1));
+        }
+        return result;
+    }
+
+    private List<GraphNode> GetGraphNodes(HashSet<long> nodeIds)
+    {
+        var nodes = new List<GraphNode>();
+        if (nodeIds.Count == 0) return nodes;
+
+        using var cmd = _conn.CreateCommand();
+        var inClause = AddIdParameters(cmd, nodeIds, "@id");
+        cmd.CommandText = $"""
+            SELECT id, scan_id, kind, label, path, detail
+            FROM graph_nodes
+            WHERE id IN ({inClause})
+            ORDER BY scan_id DESC, kind, label
+            """;
+
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            nodes.Add(new GraphNode
+            {
+                Id = reader.GetInt64(0),
+                ScanId = reader.GetInt64(1),
+                Kind = reader.GetString(2),
+                Label = reader.GetString(3),
+                Path = reader.IsDBNull(4) ? "" : reader.GetString(4),
+                Detail = reader.IsDBNull(5) ? "" : reader.GetString(5)
+            });
+        }
+        return nodes;
+    }
+
+    private List<GraphEdge> GetGraphEdges(HashSet<long> nodeIds, long? projectId)
+    {
+        var edges = new List<GraphEdge>();
+        if (nodeIds.Count == 0) return edges;
+
+        using var cmd = _conn.CreateCommand();
+        var inClause = AddIdParameters(cmd, nodeIds, "@id");
+        var projectFilter = projectId.HasValue
+            ? "AND e.scan_id IN (SELECT id FROM scans WHERE project_id = @pid)"
+            : "";
+        cmd.CommandText = $"""
+            SELECT e.id, e.scan_id, e.from_node_id, e.to_node_id, e.kind, e.label
+            FROM graph_edges e
+            WHERE e.from_node_id IN ({inClause}) AND e.to_node_id IN ({inClause}) {projectFilter}
+            ORDER BY e.scan_id DESC, e.kind
+            LIMIT 500
+            """;
+        if (projectId.HasValue) cmd.Parameters.AddWithValue("@pid", projectId.Value);
+
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            edges.Add(new GraphEdge
+            {
+                Id = reader.GetInt64(0),
+                ScanId = reader.GetInt64(1),
+                From = reader.GetInt64(2),
+                To = reader.GetInt64(3),
+                Kind = reader.GetString(4),
+                Label = reader.IsDBNull(5) ? "" : reader.GetString(5)
+            });
+        }
+        return edges;
+    }
+
+    private static string AddIdParameters(SqliteCommand cmd, IEnumerable<long> ids, string prefix)
+    {
+        var names = new List<string>();
+        var i = 0;
+        foreach (var id in ids)
+        {
+            var name = $"{prefix}{i++}";
+            names.Add(name);
+            cmd.Parameters.AddWithValue(name, id);
+        }
+        return string.Join(",", names);
+    }
+
+    // ========================
     // Helpers
     // ========================
     private void IndexForSearch(long scanId, string type, string name, string content, string path)
@@ -741,6 +1041,57 @@ public sealed class SqliteStore : IResultStore, IDisposable
             cmd.ExecuteNonQuery();
         }
         catch { /* FTS not available */ }
+    }
+
+    private long UpsertGraphNode(long scanId, string stableKey, string kind, string label, string path, string detail)
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO graph_nodes(scan_id, kind, stable_key, label, path, detail)
+            VALUES(@sid, @kind, @key, @label, @path, @detail)
+            ON CONFLICT(scan_id, stable_key) DO UPDATE SET
+                kind = excluded.kind,
+                label = excluded.label,
+                path = excluded.path,
+                detail = excluded.detail
+            """;
+        cmd.Parameters.AddWithValue("@sid", scanId);
+        cmd.Parameters.AddWithValue("@kind", kind);
+        cmd.Parameters.AddWithValue("@key", stableKey);
+        cmd.Parameters.AddWithValue("@label", label);
+        cmd.Parameters.AddWithValue("@path", path);
+        cmd.Parameters.AddWithValue("@detail", detail);
+        cmd.ExecuteNonQuery();
+
+        cmd.CommandText = "SELECT id FROM graph_nodes WHERE scan_id = @sid AND stable_key = @key";
+        return (long)cmd.ExecuteScalar()!;
+    }
+
+    private void InsertGraphEdge(long scanId, long fromNodeId, long toNodeId, string kind, string label)
+    {
+        if (fromNodeId <= 0 || toNodeId <= 0 || fromNodeId == toNodeId) return;
+
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO graph_edges(scan_id, from_node_id, to_node_id, kind, label)
+            VALUES(@sid, @from, @to, @kind, @label)
+            ON CONFLICT(scan_id, from_node_id, to_node_id, kind) DO NOTHING
+            """;
+        cmd.Parameters.AddWithValue("@sid", scanId);
+        cmd.Parameters.AddWithValue("@from", fromNodeId);
+        cmd.Parameters.AddWithValue("@to", toNodeId);
+        cmd.Parameters.AddWithValue("@kind", kind);
+        cmd.Parameters.AddWithValue("@label", label);
+        cmd.ExecuteNonQuery();
+    }
+
+    private long GetProjectIdForScan(long scanId)
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = "SELECT project_id FROM scans WHERE id = @sid";
+        cmd.Parameters.AddWithValue("@sid", scanId);
+        var result = cmd.ExecuteScalar();
+        return result is long v ? v : 0;
     }
 
     private long GetLastId()

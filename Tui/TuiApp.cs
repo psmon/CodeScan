@@ -118,6 +118,7 @@ public class MainView : Toplevel
     private readonly Label _lblSearch;
     private readonly TextField _txtSearch;
     private readonly Button _btnSearch;
+    private readonly Button _btnGraphSearch;
 
     // addinfo controls
     private readonly Label _lblAddInfo;
@@ -278,6 +279,14 @@ public class MainView : Toplevel
         };
         _btnSearch.Accepting += OnExecuteSearch;
 
+        _btnGraphSearch = new Button
+        {
+            Text = ">>> Graph Search <<<",
+            X = 22, Y = 7,
+            Visible = false
+        };
+        _btnGraphSearch.Accepting += OnExecuteGraphSearch;
+
         // AddInfo UI (hidden by default)
         _lblAddInfo = new Label
         {
@@ -324,7 +333,7 @@ public class MainView : Toplevel
 
         Add(_titleLabel, _pathLabel, _hintLabel, _btnBack, _listView, _resultView,
             _chkTree, _chkDetail, _chkStats, _lblInclude, _txtInclude, _btnExecute,
-            _lblSearch, _txtSearch, _btnSearch,
+            _lblSearch, _txtSearch, _btnSearch, _btnGraphSearch,
             _lblAddInfo, _txtAddInfo, _btnAddInfo,
             _lblUpdatePath, _txtUpdatePath, _btnUpdatePath);
 
@@ -693,8 +702,8 @@ public class MainView : Toplevel
     {
         _mode = Mode.SearchInput;
         _titleLabel.Text = "Search Indexed Data";
-        _pathLabel.Text = "Search methods, files, and docs by keyword";
-        _hintLabel.Text = "[Enter] Search  [Q] Back  [H] Home";
+        _pathLabel.Text = "Keyword search or graph search";
+        _hintLabel.Text = "[Enter] Keyword Search  [Tab] Graph Search  [Q] Back  [H] Home";
 
         _listView.Visible = false;
         _resultView.Visible = false;
@@ -703,6 +712,7 @@ public class MainView : Toplevel
         _lblSearch.Visible = true;
         _txtSearch.Visible = true;
         _btnSearch.Visible = true;
+        _btnGraphSearch.Visible = true;
 
         _txtSearch.Text = " ";
         _txtSearch.SetFocus();
@@ -716,6 +726,7 @@ public class MainView : Toplevel
         _lblSearch.Visible = false;
         _txtSearch.Visible = false;
         _btnSearch.Visible = false;
+        _btnGraphSearch.Visible = false;
 
         try
         {
@@ -758,6 +769,47 @@ public class MainView : Toplevel
         }
     }
 
+    private void OnExecuteGraphSearch(object? sender, CommandEventArgs e)
+    {
+        var query = _txtSearch.Text?.ToString()?.Trim() ?? "";
+
+        _lblSearch.Visible = false;
+        _txtSearch.Visible = false;
+        _btnSearch.Visible = false;
+        _btnGraphSearch.Visible = false;
+
+        try
+        {
+            var dbPath = AppPaths.DbPath;
+            if (!File.Exists(dbPath))
+            {
+                ShowSearchResults("No database found. Run 'scan --detail' first to index a project.", query);
+                return;
+            }
+
+            using var db = new SqliteStore(dbPath);
+            var graph = db.SearchGraph(query, null, depth: 1, limit: 80);
+            if (graph.Nodes.Count == 0)
+            {
+                ShowSearchResults(string.IsNullOrWhiteSpace(query)
+                    ? "No graph data found. Run 'scan --detail' first."
+                    : $"No graph results for: {query}", query);
+                return;
+            }
+
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine(string.IsNullOrWhiteSpace(query)
+                ? $"=== Graph Overview ({graph.Nodes.Count} nodes, {graph.Edges.Count} edges) ===\n"
+                : $"=== Graph Search ({graph.Nodes.Count} nodes, {graph.Edges.Count} edges): {query} ===\n");
+            FormatGraph(sb, graph);
+            ShowSearchResults(sb.ToString(), string.IsNullOrWhiteSpace(query) ? "graph" : query);
+        }
+        catch (Exception ex)
+        {
+            ShowSearchResults($"Graph search error: {ex.Message}", query);
+        }
+    }
+
     private static void FormatResults(System.Text.StringBuilder sb, List<SearchResult> results)
     {
         foreach (var r in results)
@@ -778,6 +830,37 @@ public class MainView : Toplevel
                 sb.AppendLine($"           {r.Excerpt}");
             sb.AppendLine();
         }
+    }
+
+    private static void FormatGraph(System.Text.StringBuilder sb, GraphData graph)
+    {
+        sb.AppendLine("--- Nodes ---");
+        foreach (var n in graph.Nodes)
+        {
+            sb.AppendLine($"  #{n.Id} [{n.Kind}] {n.Label}");
+            if (!string.IsNullOrWhiteSpace(n.Path))
+                sb.AppendLine($"       {n.Path}");
+            if (!string.IsNullOrWhiteSpace(n.Detail))
+                sb.AppendLine($"       {TrimGraphText(n.Detail, 100)}");
+        }
+
+        if (graph.Edges.Count == 0) return;
+
+        var labels = graph.Nodes.ToDictionary(n => n.Id, n => n.Label);
+        sb.AppendLine();
+        sb.AppendLine("--- Edges ---");
+        foreach (var e in graph.Edges)
+        {
+            labels.TryGetValue(e.From, out var from);
+            labels.TryGetValue(e.To, out var to);
+            sb.AppendLine($"  {from ?? e.From.ToString()} -[{e.Kind}]-> {to ?? e.To.ToString()}");
+        }
+    }
+
+    private static string TrimGraphText(string value, int max)
+    {
+        value = value.Replace('\r', ' ').Replace('\n', ' ');
+        return value.Length <= max ? value : value[..max] + "...";
     }
 
     private void ShowSearchResults(string content, string query)
@@ -1214,7 +1297,7 @@ public class MainView : Toplevel
 
         _listItems.Add("  ----------------");
         _dirEntries.Add("__SEP__");
-        _listItems.Add("  [Search] Search indexed methods, files, docs");
+        _listItems.Add("  [Search] Keyword / graph search");
         _dirEntries.Add("__SEARCH__");
         _listItems.Add("  [Projects] View indexed projects");
         _dirEntries.Add("__PROJECTS__");
@@ -1318,6 +1401,7 @@ public class MainView : Toplevel
         _lblSearch.Visible = false;
         _txtSearch.Visible = false;
         _btnSearch.Visible = false;
+        _btnGraphSearch.Visible = false;
         _lblAddInfo.Visible = false;
         _txtAddInfo.Visible = false;
         _btnAddInfo.Visible = false;

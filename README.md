@@ -1,6 +1,6 @@
 # CodeScan
 
-A fast CLI/TUI code scanner and indexer that analyzes source code at the class:method level with git blame integration, stores results in a local SQLite database with full-text search, and provides both command-line and interactive terminal interfaces.
+A fast CLI/TUI/GUI code scanner and indexer that analyzes source code at the class:method level with git blame integration, stores results in a local SQLite database with full-text and graph search, and provides command-line, terminal, and local web interfaces.
 
 Built as a single native AOT binary with .NET 10.0.
 
@@ -10,7 +10,9 @@ Built as a single native AOT binary with .NET 10.0.
 - **Git blame integration** — Associates each method with its last author, date, and commit
 - **Full-text search** — FTS5 with trigram tokenizer for substring and CJK language support
 - **Hybrid search** — Combines indexed DB search with live `git log --grep` results
+- **Graph search** — Neo4j-style source knowledge graph stored in embedded SQLite
 - **Interactive TUI** — Terminal.Gui v2 interface for browsing, scanning, and searching
+- **Local web GUI** — Keyword search, graph search, and 2D/3D graph views on port 8085 by default
 - **Project management** — Register, describe, update, and delete indexed projects
 - **Single binary** — Native AOT compiled, no runtime dependency required
 
@@ -66,8 +68,15 @@ codescan scan /path/to/project
 # Search across all indexed projects
 codescan search "HttpClient"
 
+# Graph search
+codescan graph "HttpClient"
+codescan search "HttpClient" --graph --depth 2
+
 # Launch interactive TUI
 codescan tui
+
+# Start local GUI viewer
+codescan gui start --port 8085
 ```
 
 ### CLI Commands
@@ -77,6 +86,8 @@ codescan tui
 | `scan [path]` | Register and analyze a directory (shortcut for list with defaults) |
 | `list <path>` | Scan with custom filtering and output options |
 | `search <query>` | Hybrid full-text + git log search |
+| `graph [query]` | Search and inspect source knowledge graph |
+| `gui start|stop` | Start or stop the local web GUI viewer |
 | `projects` | List all registered projects with stats |
 | `project <id>` | Show project summary or `--detail` for full view |
 | `project-addinfo <id> <text>` | Add an AI-friendly description to a project |
@@ -96,7 +107,26 @@ codescan search "TODO" --type comment
 
 # Search within a specific project
 codescan search "config" --project 1
+
+# Search the graph
+codescan search "HttpClient" --graph --depth 2
+codescan graph "SearchCommand" --project 1
 ```
+
+### GUI
+
+```bash
+# Start on the default port
+codescan gui start
+
+# Start on a custom port
+codescan gui start --port 8090
+
+# Stop the GUI server
+codescan gui stop
+```
+
+Open `http://127.0.0.1:8085/` after starting the GUI. The viewer provides keyword search, graph search, a Neo4jClient-like 2D graph canvas, and a simple 3D graph view.
 
 ### List Options
 
@@ -134,6 +164,8 @@ All data is stored under `~/.codescan/`:
 | `comments` | Comment blocks with surrounding code context |
 | `project_docs` | Auto-discovered README / AGENT / CLAUDE.md content |
 | `search_index` | FTS5 virtual table (trigram tokenizer) |
+| `graph_nodes` | Source graph nodes: projects, directories, files, classes, methods, comments, docs, authors |
+| `graph_edges` | Source graph relationships: contains, defines, authored, documents, comments |
 
 ## Architecture
 
@@ -148,6 +180,7 @@ CodeScan/
 │   ├── CommentExtractor.cs     #   Comment extraction with context
 │   ├── GitBlameService.cs      #   Git blame per method
 │   ├── GitLogSearchService.cs  #   Hybrid git log search
+│   ├── GraphModels.cs          #   Source graph DTOs
 │   ├── SqliteStore.cs          #   SQLite DB with FTS5 full-text search
 │   └── TreeFormatter.cs        #   Tree/flat output formatting
 ├── Tui/

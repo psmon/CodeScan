@@ -52,6 +52,8 @@ class Program
             "scan" => RunScan(commandArgs, globalArgs),
             "list" => RunList(commandArgs, globalArgs),
             "search" => RunSearch(commandArgs),
+            "graph" => RunGraph(commandArgs),
+            "gui" => RunGui(commandArgs),
             "projects" => RunProjects(commandArgs),
             "project" => RunProject(commandArgs),
             "project-addinfo" => RunProjectAddInfo(commandArgs),
@@ -196,6 +198,13 @@ class Program
                     if (long.TryParse(args[++i], out var pid))
                         options.ProjectId = pid;
                     break;
+                case "--graph":
+                    options.Graph = true;
+                    break;
+                case "--depth" when i + 1 < args.Length:
+                    if (int.TryParse(args[++i], out var depth))
+                        options.GraphDepth = depth;
+                    break;
                 case "-h" or "--help":
                     PrintSearchHelp();
                     return 0;
@@ -216,6 +225,66 @@ class Program
         using var db = OpenDb();
         var cmd = new SearchCommand(db);
         return cmd.Execute(query, options);
+    }
+
+    static int RunGraph(string[] args)
+    {
+        string query = "";
+        var options = new GraphOptions();
+
+        for (int i = 0; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "-l" or "--limit" when i + 1 < args.Length:
+                    if (int.TryParse(args[++i], out var lim))
+                        options.Limit = lim;
+                    break;
+                case "-p" or "--project" when i + 1 < args.Length:
+                    if (long.TryParse(args[++i], out var pid))
+                        options.ProjectId = pid;
+                    break;
+                case "-d" or "--depth" when i + 1 < args.Length:
+                    if (int.TryParse(args[++i], out var depth))
+                        options.Depth = depth;
+                    break;
+                case "-h" or "--help":
+                    PrintGraphHelp();
+                    return 0;
+                default:
+                    if (!args[i].StartsWith('-') && string.IsNullOrEmpty(query))
+                        query = args[i];
+                    break;
+            }
+        }
+
+        using var db = OpenDb();
+        var cmd = new GraphCommand(db);
+        return cmd.Execute(query, options);
+    }
+
+    static int RunGui(string[] args)
+    {
+        if (args.Length == 0 || args[0] is "-h" or "--help")
+        {
+            PrintGuiHelp();
+            return args.Length > 0 ? 0 : 1;
+        }
+
+        var action = args[0].ToLowerInvariant();
+        var port = 8085;
+        for (int i = 1; i < args.Length; i++)
+        {
+            if (args[i] is "-p" or "--port" && i + 1 < args.Length && int.TryParse(args[++i], out var parsedPort))
+                port = parsedPort;
+        }
+
+        return action switch
+        {
+            "start" => GuiCommand.Start(port),
+            "stop" => GuiCommand.Stop(port),
+            _ => UnknownCommand($"gui {action}")
+        };
     }
 
     static int RunProjects(string[] args)
@@ -374,6 +443,8 @@ class Program
             case "scan": PrintScanHelp(); break;
             case "list": PrintListHelp(); break;
             case "search": PrintSearchHelp(); break;
+            case "graph": PrintGraphHelp(); break;
+            case "gui": PrintGuiHelp(); break;
             case "projects": PrintProjectsHelp(); break;
             case "project": PrintProjectHelp(); break;
             case "project-addinfo": PrintProjectAddInfoHelp(); break;
@@ -439,6 +510,8 @@ class Program
           scan [path]                  Scan & register project (= list --detail --tree --stats)
           list <path>                  Scan directory with custom options
           search <query>               Search indexed methods, files, and docs
+          graph [query]                Search/browse source knowledge graph
+          gui start|stop               Start/stop local web GUI viewer
           projects                     List all indexed projects
           project <id> [--detail]      Show project info (summary / detail)
           project-addinfo <id> <text>  Add description to a project
@@ -468,6 +541,8 @@ class Program
           codescan project-update 1 --source       Full rescan (git pull + scan)
           codescan project-delete 1                Delete project from DB
           codescan search "HttpClient"             Search across all projects
+          codescan search "HttpClient" --graph     Graph search
+          codescan gui start --port 8085            Start web GUI viewer
         """);
     }
 
@@ -543,6 +618,8 @@ class Program
           -t, --type <type>      Filter by: method, file, doc, comment, commit
           -l, --limit <n>        Max results (default: 30)
           -p, --project <id>     Search within a specific project only
+          --graph                Search graph nodes/edges instead of text index
+          --depth <n>            Graph neighbor depth with --graph (default: 1)
           -h, --help             Show help
 
         Examples:
@@ -550,6 +627,48 @@ class Program
           codescan search "auth" --type method --limit 10
           codescan search "SSE" --type doc
           codescan search "TODO" --project 1 --type comment
+          codescan search "HttpClient" --graph --depth 2
+        """);
+    }
+
+    static void PrintGraphHelp()
+    {
+        Console.WriteLine("""
+        codescan graph - Search source knowledge graph
+
+        Usage: codescan graph [query] [options]
+
+        Graph data is stored in the same embedded SQLite DB and is updated
+        whenever a project is scanned. Nodes include projects, directories,
+        files, classes, methods, comments, docs, and git authors.
+
+        Options:
+          -p, --project <id>     Search within a specific project only
+          -d, --depth <n>        Expand neighbor depth (default: 1, max: 4)
+          -l, --limit <n>        Max matched seed nodes (default: 80)
+          -h, --help             Show help
+
+        Examples:
+          codescan graph
+          codescan graph "HttpClient"
+          codescan graph "SearchCommand" --project 1 --depth 2
+        """);
+    }
+
+    static void PrintGuiHelp()
+    {
+        Console.WriteLine("""
+        codescan gui - Local web GUI viewer
+
+        Usage: codescan gui start [--port 8085]
+               codescan gui stop  [--port 8085]
+
+        The GUI provides keyword search, graph search, and 2D/3D graph views.
+
+        Examples:
+          codescan gui start
+          codescan gui start --port 8090
+          codescan gui stop
         """);
     }
 
