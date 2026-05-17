@@ -1,0 +1,11 @@
+{
+  "$schema": "kakashi-harness",
+  "$schemaVersion": "1.0.0",
+  "name": "CodeScan Harness",
+  "description": "C# .NET AOT 소스코드 분석기(CodeScan)의 품질/구조 검수 및 워크플로우 오케스트레이션",
+  "version": "1.1.0",
+  "agents": ["tamer", "regex-safety-guard", "aot-compatibility-scout", "test-sentinel"],
+  "engine": ["test-audit"],
+  "created": "2026-05-17",
+  "lastUpdated": "2026-05-17"
+}
