@@ -78,7 +78,7 @@ Scanning can be launched from the terminal interface with method/comment extract
 After install, verify:
 
 ```bash
-codescan --version   # should print: codescan v0.4.2 (or newer)
+codescan --version   # should print: codescan v0.5.0 (or newer)
 codescan --help
 ```
 
@@ -101,7 +101,7 @@ Then install from the in-repo manifest (no admin needed after the opt-in):
 
 ```powershell
 # from a fresh clone of this repo
-winget install --manifest packaging\winget\manifests\p\psmon\CodeScan\0.4.2
+winget install --manifest packaging\winget\manifests\p\psmon\CodeScan\0.5.0
 codescan --version
 ```
 
@@ -135,7 +135,7 @@ For environments without a package manager — or when you want to pin to a spec
 ```powershell
 iwr https://raw.githubusercontent.com/psmon/CodeScan/main/Script/install-win.ps1 -OutFile install-win.ps1
 .\install-win.ps1                       # latest
-.\install-win.ps1 -Version 0.4.2        # pinned
+.\install-win.ps1 -Version 0.5.0        # pinned
 ```
 
 **Linux / macOS (bash):**
@@ -143,7 +143,7 @@ iwr https://raw.githubusercontent.com/psmon/CodeScan/main/Script/install-win.ps1
 ```bash
 curl -fsSL https://raw.githubusercontent.com/psmon/CodeScan/main/Script/install.sh -o install.sh
 sh install.sh                           # latest
-sh install.sh --version 0.4.2           # pinned
+sh install.sh --version 0.5.0           # pinned
 ```
 
 Both installers download the matching release asset from GitHub, verify SHA256 against `checksums.txt`, install to a user-local path (Win: `~/.codescan/bin`, Unix: `~/.local/bin`), and **never touch user data** under `~/.codescan/{db,logs,config}`.
