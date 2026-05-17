@@ -93,6 +93,10 @@ jobs:
           VERSION: ${{ needs.resolve-version.outputs.version }}
         run: |
           rm -rf publish
+          # IncludeNativeLibrariesForSelfExtract: embed SQLite/etc. native libs
+          #   inside the single-file bundle; .NET extracts them on launch to a
+          #   per-app temp dir. Without this, e_sqlite3.so stays in publish/
+          #   and gets lost when we ship only the executable.
           dotnet publish CodeScan.csproj \
             -c Release \
             -r ${{ matrix.rid }} \
@@ -101,6 +105,7 @@ jobs:
             --self-contained \
             -p:PublishAot=false \
             -p:PublishSingleFile=true \
+            -p:IncludeNativeLibrariesForSelfExtract=true \
             -p:TrimMode= \
             -p:IlcOptimizationPreference= \
             -p:SkipAutoBumpVersion=true \
@@ -117,6 +122,20 @@ jobs:
           [[ -f README.md ]] && cp README.md "$STAGE/" || true
           [[ -f LICENSE ]] && cp LICENSE "$STAGE/" || true
           [[ -f LICENSE.md ]] && cp LICENSE.md "$STAGE/LICENSE.md" || true
+
+      # Smoke test: verify the staged single-file binary actually runs and
+      # can open SQLite (which would catch missing native libs from publish).
+      # Skip cross-arch builds (linux-arm64 on an x64 runner can't execute the binary).
+      - name: Smoke test (native arch only)
+        if: matrix.rid != 'linux-arm64'
+        shell: bash
+        run: |
+          set -e
+          BIN="staging/codescan/${{ matrix.exe }}"
+          echo "--- $BIN --version ---"
+          "$BIN" --version
+          echo "--- $BIN projects (exercises SQLite native lib via fresh ~/.codescan/db) ---"
+          "$BIN" projects
 
       - name: Package (zip)
         if: matrix.archive == 'zip'
