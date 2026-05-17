@@ -1,0 +1,27 @@
+{
+  "base": "harness/logs",
+  "categories": [
+    "tamer"
+  ],
+  "counts": {
+    "tamer": 2
+  },
+  "items": [
+    {
+      "category": "tamer",
+      "file": "harness/logs/tamer/2026-05-17-14-00-implement-install-distribution.md",
+      "date": "2026-05-17",
+      "time": "14:00",
+      "title": "implement install distribution",
+      "size": 4862
+    },
+    {
+      "category": "tamer",
+      "file": "harness/logs/tamer/2026-05-17-12-00-add-initial-experts.md",
+      "date": "2026-05-17",
+      "time": "12:00",
+      "title": "add initial experts",
+      "size": 1795
+    }
+  ]
+}

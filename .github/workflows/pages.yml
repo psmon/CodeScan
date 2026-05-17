@@ -1,0 +1,62 @@
+name: pages
+
+# Tag-gated GitHub Pages deploy. Routine pushes to main do NOT trigger Pages —
+# only `doc-v*` tags do, so harness/logs noise can grow without spinning the CI.
+# Manual one-off redeploys: GitHub Actions UI → Run workflow (workflow_dispatch).
+on:
+  push:
+    tags:
+      - 'doc-v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow one concurrent deploy; cancel any in-progress one if a new tag lands.
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build harness-view indexes
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # build-indexes.js uses git log for contributors / commit stats
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build manifests
+        run: node Home/harness-view/scripts/build-indexes.js
+
+      - name: Ensure .nojekyll markers
+        run: |
+          touch .nojekyll
+          touch Home/.nojekyll
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          # Whole repo so the viewer can fetch ../../harness/**.md and ../../Docs/**.md
+          # at runtime (single source of truth, no mirror in Home/_resources/).
+          path: .
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-22.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

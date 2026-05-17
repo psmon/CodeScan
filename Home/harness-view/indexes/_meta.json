@@ -1,0 +1,20 @@
+{
+  "builtAt": "2026-05-17T14:01:46.402Z",
+  "builtAtMs": 1779026506402,
+  "durationMs": 290,
+  "trigger": "manual",
+  "scannedPaths": [
+    "harness/docs",
+    "harness/agents",
+    ".claude/skills",
+    "harness/knowledge",
+    "Docs",
+    "harness/logs",
+    "Docs/design",
+    "harness/engine",
+    "CLI-TIPS.md",
+    "harness/missions",
+    "harness/logs/mission-records"
+  ],
+  "sourceMaxMs": 1779026304724.2742
+}

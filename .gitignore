@@ -41,3 +41,11 @@ packages/
 Thumbs.db
 /Prompt/TestFileDB
 codescan.db
+
+# harness-view dev artifacts
+tmp/playwright/
+Home/harness-view/.meta-build.log
+Home/harness-view/indexes/.meta-build.log
+
+# Playwright MCP snapshots
+.playwright-mcp/

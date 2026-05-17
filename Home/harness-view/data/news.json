@@ -1,0 +1,72 @@
+{
+  "_description": "Recent Updates surface — bilingual EN/KO. Default audience: English. `headline`, `narrative`, `highlights[].label/text`, `prompts[].tag/text` use `{ en, ko }` shape. Scalars (updatedAt, tone) stay language-neutral.",
+  "updatedAt": "2026-05-17",
+  "headline": {
+    "en": "v0.4 cycle — first end-to-end release pipeline, three install channels go live, Native AOT single-file binaries everywhere",
+    "ko": "v0.4 사이클 — 첫 end-to-end 릴리즈 파이프라인 가동, 3개 설치 채널 라이브, 모든 OS에 Native AOT 단일 바이너리"
+  },
+  "narrative": {
+    "en": "CodeScan went from 'local dev script only' to a full distribution chain in one cycle. The release.yml matrix now builds win-x64 / linux-x64 / linux-arm64 / osx-arm64 single-file binaries with embedded SQLite native libs, generates a CycloneDX SBOM, computes SHA256 checksums, and publishes a GitHub Release on every `v*` tag. A CI smoke test runs `--version` + `projects` on every native-arch build, so missing native libs (the v0.4.0 → v0.4.1 regression) can never reach users again. On the install side, the Homebrew tap at `psmon/homebrew-codescan` is live for Apple Silicon Macs, the winget manifest is generated per release and ready to PR to `microsoft/winget-pkgs`, and the npm wrapper `codescan-cli` ships a postinstall that auto-detects OS+arch. Direct PowerShell + bash installers cover everything else. README split into English + Korean (README-KO.md) with a synchronized structure, and a new 'Why AOT?' bonus section ties the project to the 2026 Gemma 3 / Nemotron Nano on-device SLM wave and the sibling AgentZeroLite research project.",
+    "ko": "CodeScan 이 한 사이클 만에 '로컬 dev 스크립트뿐'에서 전체 배포 체인으로 도약했다. release.yml 매트릭스가 이제 win-x64 / linux-x64 / linux-arm64 / osx-arm64 single-file 바이너리를 SQLite 네이티브 lib 임베드 상태로 빌드하고, CycloneDX SBOM 을 생성하며, SHA256 checksum 을 계산하고, 모든 `v*` 태그마다 GitHub Release 를 게시한다. CI smoke test 가 모든 네이티브-arch 빌드마다 `--version` + `projects` 를 실행해서 네이티브 lib 누락 (v0.4.0 → v0.4.1 리그레션) 이 다시는 사용자에게 닿지 않는다. 설치 쪽은 `psmon/homebrew-codescan` 의 Homebrew tap 이 Apple Silicon Mac 에 라이브이고, winget 매니페스트는 릴리즈마다 생성되어 `microsoft/winget-pkgs` PR 준비 완료, npm 래퍼 `codescan-cli` 는 OS+arch 자동 감지 postinstall 을 포함한다. 직접 PowerShell + bash 인스톨러가 나머지를 커버. README 가 영문 + 한국어 (README-KO.md) 로 동기 구조 분리, 새 'Why AOT?' 보너스 섹션이 이 프로젝트를 2026 Gemma 3 / Nemotron Nano 온디바이스 SLM 흐름과 자매 프로젝트 AgentZeroLite 에 연결한다."
+  },
+  "highlights": [
+    {
+      "label": { "en": "Release pipeline",  "ko": "릴리즈 파이프라인" },
+      "text":  {
+        "en": "release.yml builds 4 native binaries on tag push, generates SBOM, aggregates checksums, runs CI smoke test (--version + projects to exercise SQLite native lib)",
+        "ko": "release.yml 이 태그 푸시마다 4개 네이티브 바이너리 빌드, SBOM 생성, checksum 집계, CI smoke test 실행 (--version + projects 로 SQLite 네이티브 lib 검증)"
+      },
+      "tone": "blue"
+    },
+    {
+      "label": { "en": "Three install channels", "ko": "3개 설치 채널" },
+      "text":  {
+        "en": "winget (Windows) · Homebrew tap psmon/codescan (macOS arm64) · npm codescan-cli (Linux x64+arm64). Same GitHub Release feeds all three",
+        "ko": "winget (Windows) · Homebrew tap psmon/codescan (macOS arm64) · npm codescan-cli (Linux x64+arm64). 세 채널 모두 동일 GitHub Release 를 가져감"
+      },
+      "tone": "purple"
+    },
+    {
+      "label": { "en": "SQLite-bundled single-file", "ko": "SQLite 임베드 단일 파일" },
+      "text":  {
+        "en": "IncludeNativeLibrariesForSelfExtract=true so the lone codescan binary carries e_sqlite3 inside and extracts on launch — no companion DLL needed on user machines",
+        "ko": "IncludeNativeLibrariesForSelfExtract=true 로 단일 codescan 바이너리가 e_sqlite3 를 내부에 담고 실행 시 추출 — 사용자 머신에 companion DLL 불필요"
+      },
+      "tone": "green"
+    },
+    {
+      "label": { "en": "Bilingual README", "ko": "이중 언어 README" },
+      "text":  {
+        "en": "README.md (EN) + README-KO.md (KO) with mirrored structure and a top-of-file language switcher. 'Why AOT?' bonus section explains the 2026 edge-SLM thesis and links to AgentZeroLite",
+        "ko": "README.md (EN) + README-KO.md (KO) 가 동일 구조 미러링 + 파일 상단 언어 스위처. 'Why AOT?' 보너스 섹션이 2026 엣지-SLM 흐름을 설명하고 AgentZeroLite 로 연결"
+      },
+      "tone": "blue"
+    }
+  ],
+  "prompts": [
+    {
+      "tag":  { "en": "Try winget",         "ko": "winget 시도" },
+      "tone": "blue",
+      "text": {
+        "en": "On Windows: enable LocalManifestFiles once (admin PowerShell), then `winget install --manifest packaging\\winget\\manifests\\p\\psmon\\CodeScan\\0.4.2` — until the microsoft/winget-pkgs PR merges",
+        "ko": "Windows 에서: 관리자 PowerShell 로 LocalManifestFiles 한 번 켠 뒤 `winget install --manifest packaging\\winget\\manifests\\p\\psmon\\CodeScan\\0.4.2` — microsoft/winget-pkgs PR 머지 전까지"
+      }
+    },
+    {
+      "tag":  { "en": "Tap on macOS",      "ko": "macOS Tap" },
+      "tone": "purple",
+      "text": {
+        "en": "`brew tap psmon/codescan && brew install codescan` on Apple Silicon. First run: `xattr -d com.apple.quarantine $(brew --prefix)/bin/codescan` (v1 unsigned)",
+        "ko": "Apple Silicon 에서 `brew tap psmon/codescan && brew install codescan`. 첫 실행: `xattr -d com.apple.quarantine $(brew --prefix)/bin/codescan` (v1 unsigned)"
+      }
+    },
+    {
+      "tag":  { "en": "Linux one-liner",    "ko": "Linux 한 줄" },
+      "tone": "green",
+      "text": {
+        "en": "Direct installer covers Linux today: `curl -fsSL https://raw.githubusercontent.com/psmon/CodeScan/main/Script/install.sh | sh` (x64 + arm64 auto-detected, SHA256 verified)",
+        "ko": "직접 인스톨러로 Linux 즉시 사용 가능: `curl -fsSL https://raw.githubusercontent.com/psmon/CodeScan/main/Script/install.sh | sh` (x64 + arm64 자동 감지, SHA256 검증)"
+      }
+    }
+  ]
+}

@@ -1,0 +1,75 @@
+{
+  "base": "harness/docs",
+  "sort": "semver-desc",
+  "items": [
+    {
+      "file": "v1.1.0.md",
+      "title": "v1.1.0",
+      "heading": "초기 전문가 3명 투입",
+      "path": "v1.1.0.md",
+      "size": 1588,
+      "modified": "2026-05-17",
+      "author": "psmon",
+      "committed": "2026-05-17"
+    },
+    {
+      "file": "README.md",
+      "title": "README",
+      "heading": "Harness — 정원",
+      "path": "README.md",
+      "size": 1287,
+      "modified": "2026-05-17",
+      "author": "psmon",
+      "committed": "2026-05-17"
+    }
+  ],
+  "contributors": [
+    {
+      "name": "psmon",
+      "commits": 5,
+      "percent": 100
+    }
+  ],
+  "contributorsAll": [
+    {
+      "name": "psmon",
+      "commits": 5,
+      "percent": 100
+    }
+  ],
+  "contributorsRecent": [
+    {
+      "name": "psmon",
+      "commits": 5,
+      "percent": 100
+    }
+  ],
+  "contributorsWindowDays": 14,
+  "commitStats": {
+    "totalAllTime": 5,
+    "last7d": 5,
+    "last30d": 5
+  },
+  "topChangedFiles": [
+    {
+      "path": "Docs/install-distribution-strategy.md",
+      "commits": 4
+    },
+    {
+      "path": "harness/logs/tamer/2026-05-17-14-00-implement-install-distribution.md",
+      "commits": 1
+    },
+    {
+      "path": "harness/agents/aot-compatibility-scout.md",
+      "commits": 1
+    },
+    {
+      "path": "harness/agents/regex-safety-guard.md",
+      "commits": 1
+    },
+    {
+      "path": "harness/agents/tamer.md",
+      "commits": 1
+    }
+  ]
+}

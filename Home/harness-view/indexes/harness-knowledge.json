@@ -1,0 +1,39 @@
+{
+  "base": "harness/knowledge",
+  "items": [
+    {
+      "id": "harness/knowledge/aot-rules.md",
+      "file": "harness/knowledge/aot-rules.md",
+      "name": "aot-rules.md",
+      "title": "aot-rules",
+      "heading": "AOT 규칙 (CodeScan)",
+      "size": 2149,
+      "modified": "2026-05-17"
+    },
+    {
+      "id": "harness/knowledge/regex-patterns.md",
+      "file": "harness/knowledge/regex-patterns.md",
+      "name": "regex-patterns.md",
+      "title": "regex-patterns",
+      "heading": "정규식 패턴 가이드 (CodeScan)",
+      "size": 2695,
+      "modified": "2026-05-17"
+    }
+  ],
+  "tree": [
+    {
+      "type": "file",
+      "name": "aot-rules.md",
+      "path": "aot-rules.md",
+      "size": 2149,
+      "modified": "2026-05-17"
+    },
+    {
+      "type": "file",
+      "name": "regex-patterns.md",
+      "path": "regex-patterns.md",
+      "size": 2695,
+      "modified": "2026-05-17"
+    }
+  ]
+}

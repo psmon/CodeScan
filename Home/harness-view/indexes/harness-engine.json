@@ -1,0 +1,12 @@
+{
+  "base": "harness/engine",
+  "items": [
+    {
+      "file": "test-audit.md",
+      "title": "test-audit",
+      "path": "test-audit.md",
+      "size": 2003,
+      "modified": "2026-05-17"
+    }
+  ]
+}

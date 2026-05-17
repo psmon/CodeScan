@@ -1,0 +1,41 @@
+{
+  "base": "harness/agents",
+  "items": [
+    {
+      "id": "harness/agents/aot-compatibility-scout.md",
+      "file": "harness/agents/aot-compatibility-scout.md",
+      "name": "aot-compatibility-scout.md",
+      "title": "aot-compatibility-scout",
+      "heading": "AOT 정찰병 (AOT Compatibility Scout)",
+      "size": 2744,
+      "modified": "2026-05-17"
+    },
+    {
+      "id": "harness/agents/regex-safety-guard.md",
+      "file": "harness/agents/regex-safety-guard.md",
+      "name": "regex-safety-guard.md",
+      "title": "regex-safety-guard",
+      "heading": "정규식 수문장 (Regex Safety Guard)",
+      "size": 2523,
+      "modified": "2026-05-17"
+    },
+    {
+      "id": "harness/agents/tamer.md",
+      "file": "harness/agents/tamer.md",
+      "name": "tamer.md",
+      "title": "tamer",
+      "heading": "정원지기 카카시 (Tamer)",
+      "size": 3043,
+      "modified": "2026-05-17"
+    },
+    {
+      "id": "harness/agents/test-sentinel.md",
+      "file": "harness/agents/test-sentinel.md",
+      "name": "test-sentinel.md",
+      "title": "test-sentinel",
+      "heading": "시험관 (Test Sentinel)",
+      "size": 2741,
+      "modified": "2026-05-17"
+    }
+  ]
+}

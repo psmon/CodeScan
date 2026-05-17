@@ -1,0 +1,22 @@
+{
+  "base": "harness/missions",
+  "recordsBase": "harness/logs/mission-records",
+  "statuses": [
+    "inbox",
+    "in_progress",
+    "done",
+    "partial",
+    "blocked",
+    "cancelled"
+  ],
+  "counts": {
+    "all": 0,
+    "inbox": 0,
+    "in_progress": 0,
+    "done": 0,
+    "partial": 0,
+    "blocked": 0,
+    "cancelled": 0
+  },
+  "items": []
+}

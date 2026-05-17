@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CodeScan — Single-binary code scanner for the AI era</title>
+<meta name="description" content="A .NET 10 Native AOT single-binary code scanner with FTS5 full-text search, a Cypher-like graph query, CLI / TUI / local web GUI — installable in one line on Windows / macOS / Linux.">
+<meta property="og:title" content="CodeScan">
+<meta property="og:description" content="Single-binary code scanner for the AI era. Index a repo, search it, query the graph — from any CLI, TUI, or local web GUI.">
+<meta property="og:image" content="img/support-os.png">
+<style>
+/* ═══════════════════════════════════════════════════════════════
+   VS Code dark theme + CodeScan palette
+   ─ cyan #3794FF / magenta #C586C0 / mint #7CFDB0
+   ═══════════════════════════════════════════════════════════════ */
+:root{
+  --bg-deep:#1E1E1E;
+  --bg-panel:#252526;
+  --bg-toolbar:#2D2D30;
+  --bg-card:#1A1A2E;
+  --border-dim:#3E3E42;
+  --border-accent:#2A2A5E;
+  --cyan:#3794FF;
+  --magenta:#C586C0;
+  --mint:#7CFDB0;
+  --yellow:#DCDCAA;
+  --text-primary:#D4D4D4;
+  --text-dim:#858585;
+  --text-soft:#C8C8D8;
+  --selection:#264F78;
+  --mono:'Cascadia Mono','Consolas','Source Code Pro',ui-monospace,Menlo,monospace;
+  --sans:'Inter','Segoe UI',-apple-system,BlinkMacSystemFont,'Pretendard',sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:var(--bg-deep);color:var(--text-primary);font-family:var(--sans);line-height:1.6;-webkit-font-smoothing:antialiased}
+a{color:var(--cyan);text-decoration:none;border-bottom:1px dashed rgba(55,148,255,.4)}
+a:hover{color:var(--mint);border-bottom-color:var(--mint)}
+code,kbd,pre{font-family:var(--mono);font-size:.92em}
+code:not(pre code){background:#0F0F1A;color:var(--mint);padding:.1em .4em;border-radius:3px;border:1px solid var(--border-accent)}
+pre{background:#0A0A14;border:1px solid var(--border-accent);border-radius:4px;padding:14px 16px;overflow-x:auto;color:#B5CEA8;font-size:13px;line-height:1.55}
+h1,h2,h3,h4{font-family:var(--sans);font-weight:700;letter-spacing:-.01em;margin:0 0 .6em}
+h2{font-size:clamp(22px,3vw,28px);color:var(--text-primary);padding-bottom:10px;border-bottom:1px solid var(--border-dim);margin-top:3em}
+h3{font-size:18px;color:var(--cyan);margin-top:2em}
+::selection{background:var(--selection)}
+
+/* ─── Top bar ─── */
+.topbar{position:sticky;top:0;z-index:50;background:rgba(30,30,30,.82);backdrop-filter:blur(8px);border-bottom:1px solid var(--border-dim)}
+.topbar .inner{max-width:1100px;margin:0 auto;padding:12px 24px;display:flex;align-items:center;gap:16px}
+.wordmark{font-family:var(--mono);font-weight:700;font-size:15px;letter-spacing:.02em;display:flex;align-items:center;gap:2px}
+.wordmark .logo{width:14px;height:14px;background:var(--cyan);opacity:.8;transform:rotate(45deg);margin-right:8px}
+.wordmark .code{color:var(--cyan)}
+.wordmark .scan{color:var(--mint);text-shadow:0 0 12px rgba(124,253,176,.55);margin-left:6px}
+.spacer{flex:1}
+.lang-toggle{display:flex;gap:4px;background:var(--bg-card);border:1px solid var(--border-accent);border-radius:4px;padding:3px;font-family:var(--mono);font-size:11px}
+.lang-toggle button{background:transparent;border:0;color:var(--text-dim);font-family:var(--mono);font-size:11px;font-weight:700;padding:4px 10px;cursor:pointer;border-radius:3px;letter-spacing:.05em}
+.lang-toggle button.active{background:var(--cyan);color:#0A0A14}
+.topbar a.gh{font-family:var(--mono);font-size:11px;color:var(--text-dim);border:0;padding:4px 10px;background:var(--bg-card);border:1px solid var(--border-accent);border-radius:4px}
+.topbar a.gh:hover{color:var(--mint);border-color:var(--mint)}
+
+/* ─── Hero ─── */
+.hero{max-width:1100px;margin:0 auto;padding:56px 24px 24px;text-align:center}
+.hero .big-mark{font-family:var(--mono);font-weight:900;font-size:clamp(36px,7vw,68px);letter-spacing:-.02em;line-height:1;margin-bottom:18px}
+.hero .big-mark .code{color:var(--cyan)}
+.hero .big-mark .scan{color:var(--mint);text-shadow:0 0 22px rgba(124,253,176,.55);margin-left:.3em}
+.hero .tagline{font-size:clamp(15px,1.8vw,19px);color:var(--text-soft);margin:0 auto 8px;max-width:720px}
+.hero .sub{font-size:14px;color:var(--text-dim);max-width:720px;margin:0 auto 28px}
+.hero-card{max-width:1100px;margin:0 auto 12px;padding:0 24px}
+.hero-card .frame{position:relative;border-radius:8px;overflow:hidden;border:1px solid var(--border-accent);box-shadow:0 20px 60px rgba(0,0,0,.45),0 0 0 1px rgba(124,253,176,.1),0 0 48px rgba(124,253,176,.08);background:var(--bg-panel)}
+.hero-card .frame::after{content:"";position:absolute;inset:0;border-radius:8px;pointer-events:none;box-shadow:inset 0 0 0 1px rgba(55,148,255,.14)}
+.hero-card img{display:block;width:100%;height:auto}
+.hero-pitch{max-width:820px;margin:24px auto 0;padding:0 24px;color:var(--text-soft);font-size:15px;line-height:1.75}
+
+/* ─── Sections ─── */
+.section{max-width:1100px;margin:0 auto;padding:0 24px}
+.cta-row{display:flex;gap:10px;justify-content:center;margin:28px 0 0;flex-wrap:wrap}
+.btn{display:inline-block;padding:10px 18px;border-radius:4px;font-family:var(--mono);font-size:13px;font-weight:700;border:1px solid var(--border-accent);background:var(--bg-card);color:var(--text-primary);cursor:pointer;letter-spacing:.02em}
+.btn:hover{border-color:var(--mint);color:var(--mint);border-bottom-color:var(--mint)}
+.btn.primary{background:linear-gradient(180deg,#1a3049,#14143A);border-color:var(--cyan);color:var(--cyan)}
+.btn.primary:hover{border-color:var(--mint);color:var(--mint);background:linear-gradient(180deg,#132430,#14143A)}
+
+/* ─── Feature grid ─── */
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin-top:18px}
+.card{background:var(--bg-card);border:1px solid var(--border-accent);border-radius:6px;padding:18px 18px 16px;transition:border-color .15s}
+.card:hover{border-color:var(--cyan)}
+.card .tag{display:inline-block;font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.08em;color:var(--mint);border:1px solid var(--mint);padding:2px 7px;border-radius:3px;margin-bottom:10px}
+.card h4{font-size:15px;margin:0 0 8px;color:var(--text-primary)}
+.card p{margin:0;color:var(--text-soft);font-size:13.5px;line-height:1.65}
+.card.accent-cyan .tag{color:var(--cyan);border-color:var(--cyan)}
+.card.accent-magenta .tag{color:var(--magenta);border-color:var(--magenta)}
+.card.accent-yellow .tag{color:var(--yellow);border-color:var(--yellow)}
+
+/* ─── Install matrix ─── */
+.install-matrix{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;margin-top:18px}
+.install-card{background:var(--bg-card);border:1px solid var(--border-accent);border-radius:6px;padding:20px;display:flex;flex-direction:column;gap:10px}
+.install-card .os{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.08em;color:var(--cyan);text-transform:uppercase}
+.install-card .arch{font-family:var(--mono);font-size:11px;color:var(--text-dim);margin-left:8px}
+.install-card pre{margin:0;background:#0A0A14;border:1px solid var(--border-accent);padding:10px 12px;font-size:12.5px}
+.install-card .note{font-size:12.5px;color:var(--text-dim)}
+.install-card .note code{font-size:11.5px}
+
+/* ─── Recipe ─── */
+.recipe{margin-top:14px;background:var(--bg-card);border:1px solid var(--border-accent);border-radius:6px;padding:22px 24px}
+.recipe ol{padding-left:0;list-style:none;margin:0;counter-reset:step}
+.recipe li{counter-increment:step;padding:12px 0 12px 46px;border-bottom:1px dashed var(--border-dim);position:relative;color:var(--text-soft)}
+.recipe li:last-child{border-bottom:0}
+.recipe li::before{content:counter(step);position:absolute;left:0;top:14px;width:30px;height:30px;border-radius:50%;background:#0A0A14;border:1px solid var(--mint);color:var(--mint);font-family:var(--mono);font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center}
+.recipe li strong{color:var(--text-primary);display:block;margin-bottom:4px;font-size:14px}
+.recipe li code{display:block;margin-top:6px;padding:6px 10px;background:#0A0A14;border:1px solid var(--border-accent);border-radius:3px;color:#B5CEA8;font-size:12.5px;white-space:pre-wrap}
+
+/* ─── Command table ─── */
+.cmd-table{width:100%;border-collapse:collapse;margin-top:14px;font-size:13px}
+.cmd-table th,.cmd-table td{padding:9px 12px;border-bottom:1px solid var(--border-dim);text-align:left;vertical-align:top}
+.cmd-table th{background:var(--bg-panel);color:var(--cyan);font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;font-weight:700}
+.cmd-table td:first-child{font-family:var(--mono);color:var(--mint);white-space:nowrap;font-size:12px}
+.cmd-table td:last-child{color:var(--text-soft)}
+
+/* ─── Screenshot strip ─── */
+.shot-strip{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:18px}
+.shot{background:var(--bg-card);border:1px solid var(--border-accent);border-radius:6px;overflow:hidden}
+.shot img{display:block;width:100%;height:auto}
+.shot .cap{padding:10px 14px;color:var(--text-dim);font-size:12px;font-family:var(--mono);border-top:1px solid var(--border-accent)}
+.shot .cap b{color:var(--mint)}
+@media (max-width:640px){.shot-strip{grid-template-columns:1fr}}
+
+/* ─── Footer ─── */
+footer{max-width:1100px;margin:60px auto 40px;padding:24px;border-top:1px solid var(--border-dim);color:var(--text-dim);font-size:12.5px;display:flex;gap:20px;flex-wrap:wrap;align-items:center}
+footer .spacer{flex:1}
+footer a{color:var(--text-dim)}
+footer a:hover{color:var(--mint)}
+
+/* ─── Language switching ─── */
+[data-lang="en"] .ko{display:none}
+[data-lang="ko"] .en{display:none}
+
+/* ─── Responsive ─── */
+@media (max-width:640px){
+  .hero{padding-top:32px}
+  .topbar .inner{padding:10px 14px}
+  .hero-card{padding:0 14px}
+  .hero-pitch,.section{padding:0 18px}
+  .recipe{padding:16px 18px}
+  .recipe li{padding-left:38px}
+}
+</style>
+</head>
+<body data-lang="en">
+
+<!-- ═════════════════════ Top bar ═════════════════════ -->
+<div class="topbar">
+  <div class="inner">
+    <div class="wordmark">
+      <span class="logo"></span>
+      <span class="code">CODE</span><span class="scan">SCAN</span>
+    </div>
+    <div class="spacer"></div>
+    <div class="lang-toggle" role="tablist">
+      <button data-set-lang="en" class="active" aria-label="English">EN</button>
+      <button data-set-lang="ko" aria-label="한국어">KO</button>
+    </div>
+    <a class="gh" href="harness-view/" rel="noopener">Dev Harness →</a>
+    <a class="gh" href="https://github.com/psmon/CodeScan" target="_blank" rel="noopener">GitHub ↗</a>
+  </div>
+</div>
+
+<!-- ═════════════════════ Hero ═════════════════════ -->
+<section class="hero">
+  <div class="big-mark">
+    <span class="code">CODE</span><span class="scan">SCAN</span>
+  </div>
+  <p class="tagline en">Single-binary code scanner for the AI era</p>
+  <p class="tagline ko">AI 시대를 위한 단일 바이너리 코드 스캐너</p>
+  <p class="sub en">Index a codebase at the class:method level with git blame, query it from any CLI, TUI, or local web GUI — one self-contained binary, no runtime to install.</p>
+  <p class="sub ko">소스 코드를 클래스:메서드 단위로 git blame 과 함께 인덱싱하고, CLI / TUI / 로컬 웹 GUI 어느 곳에서든 질의 — 런타임 설치 없는 단일 self-contained 바이너리.</p>
+  <div class="cta-row">
+    <a class="btn primary" href="https://github.com/psmon/CodeScan/releases/latest" target="_blank" rel="noopener">
+      <span class="en">⬇ Latest GitHub Release</span>
+      <span class="ko">⬇ 최신 GitHub Release</span>
+    </a>
+    <a class="btn" href="#install"><span class="en">🛠 Install in one line</span><span class="ko">🛠 한 줄 설치</span></a>
+    <a class="btn" href="#features"><span class="en">✨ What it does</span><span class="ko">✨ 할 수 있는 일</span></a>
+    <a class="btn" href="#why-aot"><span class="en">⚡ Why AOT?</span><span class="ko">⚡ Why AOT?</span></a>
+    <a class="btn" href="harness-view/"><span class="en">🧭 Dev Harness</span><span class="ko">🧭 개발 하네스</span></a>
+    <a class="btn" href="https://github.com/psmon/CodeScan" target="_blank" rel="noopener">GitHub</a>
+  </div>
+</section>
+
+<!-- ═════════════════════ Hero image ═════════════════════ -->
+<div class="hero-card">
+  <div class="frame">
+    <img src="img/support-os.png" alt="CodeScan multi-OS release pipeline — win-x64, linux-x64, linux-arm64, osx-arm64 + SBOM + GitHub Release" loading="lazy">
+  </div>
+</div>
+
+<!-- ═════════════════════ One-paragraph pitch ═════════════════════ -->
+<div class="hero-pitch">
+  <p class="en">One release pipeline produces four native binaries (<code>win-x64</code>, <code>linux-x64</code>, <code>linux-arm64</code>, <code>osx-arm64</code>) with SQLite embedded inside the single file. The same binary feeds <strong style="color:var(--mint)">three install channels</strong> — <code>winget</code>, <code>brew</code>, <code>npm</code> — plus a direct shell installer. Every release passes a CI smoke test (<code>--version</code> + <code>projects</code>) so a missing native library can never reach users.</p>
+  <p class="ko">하나의 릴리즈 파이프라인이 네 개의 네이티브 바이너리 (<code>win-x64</code>, <code>linux-x64</code>, <code>linux-arm64</code>, <code>osx-arm64</code>) 를 SQLite 임베드 상태로 만들어내고, 동일한 바이너리가 <strong style="color:var(--mint)">3개 설치 채널</strong> — <code>winget</code>, <code>brew</code>, <code>npm</code> — 과 직접 셸 인스톨러를 모두 먹입니다. 모든 릴리즈가 CI smoke test (<code>--version</code> + <code>projects</code>) 를 통과 — 네이티브 라이브러리 누락이 사용자에게 닿을 수 없습니다.</p>
+</div>
+
+<!-- ═════════════════════ Easy install ═════════════════════ -->
+<section class="section" id="install">
+  <h2 class="en">Easy install — one line per OS</h2>
+  <h2 class="ko">간편 설치 — OS별 한 줄</h2>
+  <div class="install-matrix">
+    <div class="install-card">
+      <div><span class="os">Windows</span><span class="arch">x64</span></div>
+      <pre>winget install psmon.CodeScan</pre>
+      <div class="note en">Channel-PR pending. Until merged, use <code>winget install --manifest packaging\winget\manifests\p\psmon\CodeScan\0.4.2</code> after enabling local manifests once: <code>winget settings --enable LocalManifestFiles</code> (admin).</div>
+      <div class="note ko">채널 PR 머지 전까지는 <code>winget install --manifest packaging\winget\manifests\p\psmon\CodeScan\0.4.2</code>. 사전에 관리자 PowerShell 로 <code>winget settings --enable LocalManifestFiles</code> 한 번 실행.</div>
+    </div>
+    <div class="install-card">
+      <div><span class="os">macOS</span><span class="arch">arm64 (Apple Silicon)</span></div>
+      <pre>brew tap psmon/codescan
+brew install codescan</pre>
+      <div class="note en">Tap is live. Intel Mac is a v2 candidate — build from source or use Rosetta with the arm64 build until then.</div>
+      <div class="note ko">Tap 라이브. Intel Mac 은 v2 후보 — 그때까지 소스 빌드 또는 Rosetta 로 arm64 바이너리 실행.</div>
+    </div>
+    <div class="install-card">
+      <div><span class="os">Linux</span><span class="arch">x64 · arm64 (glibc)</span></div>
+      <pre>npm install -g codescan-cli</pre>
+      <div class="note en">Thin wrapper — postinstall auto-detects OS+arch and downloads the right binary from GitHub Releases. Registry publish pending. Until then, use the direct installer below.</div>
+      <div class="note ko">얇은 래퍼 — postinstall 이 OS+arch 자동 감지 후 GitHub Releases 에서 적합한 바이너리 다운로드. 레지스트리 publish 대기 중. 그때까지는 아래 직접 인스톨러 사용.</div>
+    </div>
+  </div>
+
+  <h3 class="en">Direct installer (fallback)</h3>
+  <h3 class="ko">직접 인스톨러 (fallback)</h3>
+  <p class="en">For environments without a package manager — or to pin a specific release. Both installers download the matching asset, verify SHA256 against <code>checksums.txt</code>, install to a user-local path, and never touch <code>~/.codescan/{db,logs,config}</code>.</p>
+  <p class="ko">패키지 매니저 없는 환경 또는 특정 릴리즈로 고정할 때. 두 인스톨러 모두 자산 다운로드 → <code>checksums.txt</code> 기준 SHA256 검증 → 사용자 로컬 경로 설치 → <code>~/.codescan/{db,logs,config}</code> 사용자 데이터는 절대 건드리지 않음.</p>
+  <pre><b style="color:var(--cyan)"># Windows (PowerShell)</b>
+iwr https://raw.githubusercontent.com/psmon/CodeScan/main/Script/install-win.ps1 -OutFile install-win.ps1
+.\install-win.ps1
+
+<b style="color:var(--cyan)"># Linux / macOS</b>
+curl -fsSL https://raw.githubusercontent.com/psmon/CodeScan/main/Script/install.sh -o install.sh
+sh install.sh</pre>
+</section>
+
+<!-- ═════════════════════ Screenshots ═════════════════════ -->
+<section class="section" id="screenshots">
+  <h2 class="en">CLI · TUI · GUI — same binary, three surfaces</h2>
+  <h2 class="ko">CLI · TUI · GUI — 같은 바이너리, 세 가지 인터페이스</h2>
+  <div class="shot-strip">
+    <div class="shot">
+      <img src="img/codescan-tui.png" alt="CodeScan TUI home — Terminal.Gui v2 project browser" loading="lazy">
+      <div class="cap"><b>TUI</b> — Terminal.Gui v2 (NetDriver) state machine. Project browsing, scan, keyword search, graph search.</div>
+    </div>
+    <div class="shot">
+      <img src="img/codescan-gui.png" alt="CodeScan local web GUI — graph viewer" loading="lazy">
+      <div class="cap"><b>GUI</b> — Local web viewer on port 8085. Keyword + graph + Cypher-like query, 2D canvas, controllable 3D view.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ═════════════════════ Features ═════════════════════ -->
+<section class="section" id="features">
+  <h2 class="en">What it does for you</h2>
+  <h2 class="ko">이 제품이 해주는 일</h2>
+
+  <div class="grid">
+    <div class="card accent-cyan">
+      <span class="tag">MULTI-LANG</span>
+      <h4 class="en">10 languages, class:method level</h4>
+      <h4 class="ko">10개 언어, 클래스:메서드 단위</h4>
+      <p class="en">Extracts classes, methods, comments, and dependency hints across C#, Java, Kotlin, JS, TS, PHP, Python, Go, Rust, C/C++.</p>
+      <p class="ko">C#, Java, Kotlin, JS, TS, PHP, Python, Go, Rust, C/C++ 에서 클래스, 메서드, 주석, 의존성 힌트 추출.</p>
+    </div>
+
+    <div class="card accent-cyan">
+      <span class="tag">GIT BLAME</span>
+      <h4 class="en">Method-level authorship</h4>
+      <h4 class="ko">메서드 단위 작성자 추적</h4>
+      <p class="en">Each method carries its last author, date, and commit — no extra step, no separate index.</p>
+      <p class="ko">각 메서드가 최종 작성자, 작성일, 커밋을 함께 보관 — 별도 단계나 인덱스 없음.</p>
+    </div>
+
+    <div class="card">
+      <span class="tag">FTS5</span>
+      <h4 class="en">Trigram full-text + CJK</h4>
+      <h4 class="ko">Trigram 풀텍스트 + CJK</h4>
+      <p class="en">SQLite FTS5 with a trigram tokenizer covers substring search and CJK languages (Korean, Chinese, Japanese) effectively.</p>
+      <p class="ko">SQLite FTS5 + trigram 토크나이저로 부분 문자열 검색과 한·중·일 CJK 언어를 효과적으로 커버.</p>
+    </div>
+
+    <div class="card accent-magenta">
+      <span class="tag">HYBRID SEARCH</span>
+      <h4 class="en">Index + live <code>git log --grep</code></h4>
+      <h4 class="ko">인덱스 + 라이브 <code>git log --grep</code></h4>
+      <p class="en">Combines indexed FTS5 hits with live <code>git log --grep</code> matches — covers both the index and commit-message context.</p>
+      <p class="ko">인덱싱된 FTS5 결과와 라이브 <code>git log --grep</code> 매치를 결합 — 인덱스와 커밋 메시지 컨텍스트를 모두 커버.</p>
+    </div>
+
+    <div class="card accent-magenta">
+      <span class="tag">GRAPH</span>
+      <h4 class="en">Source knowledge graph</h4>
+      <h4 class="ko">소스 지식 그래프</h4>
+      <p class="en">Neo4j-style nodes (project, file, class, method, author, type, module) + edges (contains, defines, authored, imports, creates, uses_type, inherits_or_implements) — all in embedded SQLite.</p>
+      <p class="ko">Neo4j 스타일 노드 (project, file, class, method, author, type, module) + 엣지 (contains, defines, authored, imports, creates, uses_type, inherits_or_implements) 를 임베디드 SQLite 에.</p>
+    </div>
+
+    <div class="card accent-yellow">
+      <span class="tag">CYPHER-LIKE</span>
+      <h4 class="en">Safe <code>MATCH</code> query subset</h4>
+      <h4 class="ko">안전한 <code>MATCH</code> 질의 서브셋</h4>
+      <p class="en">Run <code>MATCH ... WHERE ... LIMIT</code> against the source graph — for CLI users, AI agents, and automation scripts that need structured graph retrieval without raw SQL.</p>
+      <p class="ko">소스 그래프에 <code>MATCH ... WHERE ... LIMIT</code> 실행 — SQL 직접 사용 없이 구조화된 그래프 조회가 필요한 CLI 사용자, AI 에이전트, 자동화 스크립트 용.</p>
+    </div>
+
+    <div class="card accent-cyan">
+      <span class="tag">TUI</span>
+      <h4 class="en">Terminal.Gui v2 (NetDriver)</h4>
+      <h4 class="ko">Terminal.Gui v2 (NetDriver)</h4>
+      <p class="en">Project browsing, scanning, keyword search, graph search — entirely from the terminal.</p>
+      <p class="ko">프로젝트 탐색, 스캔, 키워드 검색, 그래프 검색 — 터미널만으로.</p>
+    </div>
+
+    <div class="card accent-cyan">
+      <span class="tag">LOCAL WEB GUI</span>
+      <h4 class="en">2D canvas + 3D camera</h4>
+      <h4 class="ko">2D 캔버스 + 3D 카메라</h4>
+      <p class="en">Local web GUI on port 8085. Keyword + graph + Cypher-like query, Neo4jClient-style 2D graph canvas, controllable 3D view.</p>
+      <p class="ko">포트 8085 로컬 웹 GUI. 키워드 + 그래프 + Cypher-like 질의, Neo4jClient 스타일 2D 그래프 캔버스, 카메라 제어 가능한 3D 뷰.</p>
+    </div>
+
+    <div class="card">
+      <span class="tag">SINGLE BINARY</span>
+      <h4 class="en">No runtime to install</h4>
+      <h4 class="ko">런타임 설치 불필요</h4>
+      <p class="en">.NET 10 self-contained single file with SQLite native lib embedded. Copy one file and run — Raspberry Pi included.</p>
+      <p class="ko">.NET 10 self-contained 단일 파일에 SQLite 네이티브 lib 임베드. 파일 하나 복사하면 끝 — 라즈베리 파이 포함.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═════════════════════ Recipe ═════════════════════ -->
+<section class="section">
+  <h2 class="en">Five-minute getting started</h2>
+  <h2 class="ko">5분 시작하기</h2>
+  <div class="recipe">
+    <ol>
+      <li>
+        <strong class="en">Install (one of the three lines from above)</strong>
+        <strong class="ko">설치 (위 세 줄 중 하나)</strong>
+        <code class="en">winget install psmon.CodeScan   # Windows
+brew install psmon/codescan/codescan   # macOS
+npm install -g codescan-cli   # Linux</code>
+        <code class="ko">winget install psmon.CodeScan   # Windows
+brew install psmon/codescan/codescan   # macOS
+npm install -g codescan-cli   # Linux</code>
+      </li>
+      <li>
+        <strong class="en">Scan a project (register + analyze + display)</strong>
+        <strong class="ko">프로젝트 스캔 (등록 + 분석 + 표시)</strong>
+        <code>codescan scan /path/to/project</code>
+      </li>
+      <li>
+        <strong class="en">Search the index (hybrid: FTS5 + git log)</strong>
+        <strong class="ko">인덱스 검색 (하이브리드: FTS5 + git log)</strong>
+        <code>codescan search "HttpClient" --type method</code>
+      </li>
+      <li>
+        <strong class="en">Query the source graph (Cypher-like)</strong>
+        <strong class="ko">소스 그래프 질의 (Cypher-like)</strong>
+        <code>codescan query "MATCH (c:class)-[r:uses_type]->(t:type) WHERE t.label = 'HttpClient'"</code>
+      </li>
+      <li>
+        <strong class="en">Launch the TUI or local web GUI</strong>
+        <strong class="ko">TUI 또는 로컬 웹 GUI 실행</strong>
+        <code>codescan tui
+codescan gui start --port 8085   # browse http://127.0.0.1:8085/</code>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<!-- ═════════════════════ CLI commands ═════════════════════ -->
+<section class="section">
+  <h2 class="en">CLI commands at a glance</h2>
+  <h2 class="ko">한눈에 보는 CLI 명령</h2>
+  <table class="cmd-table">
+    <thead><tr><th>Command</th><th class="en">Description</th><th class="ko">설명</th></tr></thead>
+    <tbody>
+      <tr><td>scan [path]</td><td class="en">Register + analyze a directory</td><td class="ko">디렉토리 등록 + 분석</td></tr>
+      <tr><td>list &lt;path&gt;</td><td class="en">Scan with custom filtering and output</td><td class="ko">사용자 정의 필터/출력으로 스캔</td></tr>
+      <tr><td>search &lt;query&gt;</td><td class="en">Hybrid FTS5 + git log search</td><td class="ko">FTS5 + git log 하이브리드 검색</td></tr>
+      <tr><td>graph [query]</td><td class="en">Search and inspect the source graph</td><td class="ko">소스 그래프 탐색</td></tr>
+      <tr><td>query &lt;graph-query&gt;</td><td class="en">Run a Cypher-like MATCH query</td><td class="ko">Cypher-like MATCH 질의 실행</td></tr>
+      <tr><td>gui start | stop</td><td class="en">Start / stop the local web GUI</td><td class="ko">로컬 웹 GUI 시작 / 정지</td></tr>
+      <tr><td>tui</td><td class="en">Launch the interactive TUI</td><td class="ko">인터랙티브 TUI 실행</td></tr>
+      <tr><td>projects</td><td class="en">List all registered projects</td><td class="ko">등록된 모든 프로젝트 나열</td></tr>
+      <tr><td>project &lt;id&gt;</td><td class="en">Show project summary / --detail</td><td class="ko">프로젝트 요약 또는 --detail 전체 보기</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ═════════════════════ Why AOT? ═════════════════════ -->
+<section class="section" id="why-aot">
+  <h2 class="en">Why AOT? — Edge AI trend and the value of a single binary</h2>
+  <h2 class="ko">Why AOT? — Edge AI 트렌드와 단일 바이너리의 가치</h2>
+  <p class="en">2026–2027 AI infrastructure is shifting from cloud frontier models toward <strong style="color:var(--mint)">on-device SLMs</strong> (Gemma 3, Nemotron Nano) and <strong style="color:var(--mint)">edge agents</strong>. Native AOT single-binary tools fit the same constraints those models live under — no runtime present, memory pressure, instant cold-start, supply-chain integrity. CodeScan ships under those constraints from v1.</p>
+  <p class="ko">2026~2027년 AI 인프라의 무게중심이 클라우드 프론티어 모델에서 <strong style="color:var(--mint)">온디바이스 SLM</strong> (Gemma 3, Nemotron Nano) 과 <strong style="color:var(--mint)">엣지 에이전트</strong> 로 이동하고 있습니다. Native AOT 단일 바이너리 도구는 그 모델들이 처한 제약 — 런타임 부재, 메모리 압박, 즉시 콜드 스타트, 공급망 무결성 — 에 그대로 부합. CodeScan 은 v1 부터 그 제약 위에 빌드됩니다.</p>
+  <div class="grid">
+    <div class="card accent-cyan">
+      <span class="tag">INSTANT START</span>
+      <h4 class="en">No JIT warmup</h4>
+      <h4 class="ko">JIT warmup 없음</h4>
+      <p class="en">Decisive when an edge agent must respond within ~50 ms of a voice trigger.</p>
+      <p class="ko">엣지 에이전트가 음성 트리거 후 약 50ms 안에 응답해야 하는 시나리오에서 결정적.</p>
+    </div>
+    <div class="card accent-cyan">
+      <span class="tag">RUNTIME-FREE</span>
+      <h4 class="en">Copy & run on a Pi</h4>
+      <h4 class="ko">파이에 복사만 하면 끝</h4>
+      <p class="en">A single <code>codescan</code> file runs on a Raspberry Pi with no .NET installed.</p>
+      <p class="ko">단일 <code>codescan</code> 파일이 .NET 설치 없는 라즈베리 파이에서 그대로 동작.</p>
+    </div>
+    <div class="card">
+      <span class="tag">MULTI-ARCH</span>
+      <h4 class="en">linux-arm64 is first-class</h4>
+      <h4 class="ko">linux-arm64 1급 지원</h4>
+      <p class="en">From v1 the same pipeline publishes win-x64, linux-x64, linux-arm64, osx-arm64 as peer artifacts. SBC deployment needs no separate build.</p>
+      <p class="ko">v1부터 동일 파이프라인이 win-x64, linux-x64, linux-arm64, osx-arm64 를 동등하게 게시. SBC 배포에 별도 빌드 절차 없음.</p>
+    </div>
+    <div class="card accent-yellow">
+      <span class="tag">SUPPLY-CHAIN</span>
+      <h4 class="en">SBOM + SHA256, single file</h4>
+      <h4 class="ko">SBOM + SHA256, 단일 파일</h4>
+      <p class="en">Every release ships a CycloneDX SBOM (<code>sbom.cdx.json</code>) and SHA256 in <code>checksums.txt</code>. Edge updates are infrequent, so artifact integrity matters more.</p>
+      <p class="ko">모든 릴리즈가 CycloneDX SBOM (<code>sbom.cdx.json</code>) + <code>checksums.txt</code> 의 SHA256 동봉. 엣지는 업데이트가 드물어 산출물 무결성이 더 중요.</p>
+    </div>
+  </div>
+  <p class="en" style="margin-top:24px;color:var(--text-soft)"><strong style="color:var(--mint)">Companion project</strong> — the "agent" half of the picture is being built in parallel as <a href="https://github.com/psmon/AgentZeroLite" target="_blank" rel="noopener">psmon/AgentZeroLite</a>: an on-device SLM host that runs and evaluates Gemma 3 / Nemotron Nano-class models on real consumer hardware. CodeScan acts as the code-aware retrieval layer those agents call into.</p>
+  <p class="ko" style="margin-top:24px;color:var(--text-soft)"><strong style="color:var(--mint)">자매 프로젝트</strong> — 그림의 "에이전트" 쪽은 <a href="https://github.com/psmon/AgentZeroLite" target="_blank" rel="noopener">psmon/AgentZeroLite</a> 에서 평행하게 만들어지고 있습니다: Gemma 3 / Nemotron Nano 급 온디바이스 SLM 을 실제 컨슈머 하드웨어에서 호스팅·평가. CodeScan 은 그 에이전트가 호출하는 코드 인지형 검색 레이어 역할.</p>
+</section>
+
+<!-- ═════════════════════ Footer ═════════════════════ -->
+<footer>
+  <span class="en">CodeScan — a .NET 10 Native AOT single-binary code scanner</span>
+  <span class="ko">CodeScan — .NET 10 Native AOT 단일 바이너리 코드 스캐너</span>
+  <span class="spacer"></span>
+  <a href="https://github.com/psmon/CodeScan" target="_blank" rel="noopener">GitHub</a>
+  <a href="https://github.com/psmon/CodeScan/releases" target="_blank" rel="noopener">Releases</a>
+  <a href="harness-view/">Dev Harness</a>
+</footer>
+
+<script>
+// Language toggle — persists in localStorage.
+(function(){
+  var body = document.body;
+  var stored = localStorage.getItem('codescan.lang');
+  if (stored === 'en' || stored === 'ko') body.dataset.lang = stored;
+  document.querySelectorAll('.lang-toggle button').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var lang = btn.getAttribute('data-set-lang');
+      body.dataset.lang = lang;
+      localStorage.setItem('codescan.lang', lang);
+      document.querySelectorAll('.lang-toggle button').forEach(function(b){
+        b.classList.toggle('active', b === btn);
+      });
+    });
+  });
+  // Sync active button to current state on load.
+  document.querySelectorAll('.lang-toggle button').forEach(function(b){
+    b.classList.toggle('active', b.getAttribute('data-set-lang') === body.dataset.lang);
+  });
+})();
+</script>
+
+</body>
+</html>

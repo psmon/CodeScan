@@ -1,0 +1,83 @@
+{
+  "_description": "PDSA Learning surface — bilingual EN/KO. Default audience: English. `sources[].title`, `tried[]`, `solved[]`, `remaining[]`, `learned.lead`, `learned.body` use `{ en, ko }` shape. Scalars (date/time/category/file/analyzedAt/windowDays) stay language-neutral. PDSA UPDATE mode in the harness-view-build skill must emit both languages.",
+  "analyzedAt": "2026-05-17",
+  "windowDays": 14,
+  "sources": [
+    {
+      "date": "2026-05-17", "time": "14:00", "category": "tamer",
+      "file": "harness/logs/tamer/2026-05-17-14-00-implement-install-distribution.md",
+      "title": {
+        "en": "Implement install/distribution per the v1 confirmed plan — release.yml matrix CI, install-win.ps1, install.sh, winget portable manifest, Homebrew tap formula, npm postinstall wrapper, plus a packaging README that ties them together",
+        "ko": "v1 확정안에 따라 install/distribution 1차 구현 — release.yml 매트릭스 CI, install-win.ps1, install.sh, winget portable 매니페스트, Homebrew tap formula, npm postinstall 래퍼 + packaging 통합 README"
+      }
+    },
+    {
+      "date": "2026-05-17", "time": "12:00", "category": "tamer",
+      "file": "harness/logs/tamer/2026-05-17-12-00-add-initial-experts.md",
+      "title": {
+        "en": "Initial experts planted under tamer — regex-safety-guard (GeneratedRegex AOT safety + backtracking), aot-compatibility-scout (IL/AOT warning surface), test-sentinel (7-language matrix coverage), plus the test-audit engine that orchestrates all three",
+        "ko": "tamer 아래 초기 전문가 투입 — regex-safety-guard (GeneratedRegex AOT 안전성 + 백트래킹), aot-compatibility-scout (IL/AOT 경고 표면), test-sentinel (7개 언어 매트릭스 커버리지) + 세 명을 오케스트레이션하는 test-audit 엔진"
+      }
+    }
+  ],
+  "tried": [
+    {
+      "en": "Cut v0.4.0 from a clean release.yml pipeline (matrix: win-x64 / linux-x64 / linux-arm64 / osx-x64 / osx-arm64) — but osx-x64 sat queued indefinitely on the constrained macos-13 runner pool, blocking the publish step",
+      "ko": "깨끗한 release.yml 파이프라인 (matrix: win-x64 / linux-x64 / linux-arm64 / osx-x64 / osx-arm64) 에서 v0.4.0 컷 — 그러나 osx-x64 가 macos-13 러너 풀 부족으로 큐에 영구 대기, publish 단계 차단"
+    },
+    {
+      "en": "Drop osx-x64 from the v1 matrix entirely (Intel Mac → v2), then re-tag v0.4.0; published 4-binary release successfully and validated install-win.ps1 on the host machine",
+      "ko": "v1 매트릭스에서 osx-x64 를 완전 제외 (Intel Mac → v2) 후 v0.4.0 재태그; 4-바이너리 릴리즈가 성공적으로 게시되고 호스트에서 install-win.ps1 검증"
+    },
+    {
+      "en": "Validate the same v0.4.0 binary on WSL Debian via install.sh — `codescan projects` immediately blew up with DllNotFoundException for e_sqlite3, since PublishSingleFile by default keeps native libs in publish/ rather than embedding them in the bundle",
+      "ko": "동일한 v0.4.0 바이너리를 WSL Debian 에서 install.sh 로 검증 — `codescan projects` 가 e_sqlite3 DllNotFoundException 으로 즉시 폭발; PublishSingleFile 기본값이 네이티브 라이브러리를 번들에 임베드하지 않고 publish/ 에 별도로 두기 때문"
+    },
+    {
+      "en": "Ship v0.4.1 with `IncludeNativeLibrariesForSelfExtract=true` plus a CI smoke test step (--version + projects on every native-arch build) so future native-lib regressions fail the release job, not the user's first launch",
+      "ko": "`IncludeNativeLibrariesForSelfExtract=true` + CI smoke test 단계 (모든 네이티브-arch 빌드마다 --version + projects 실행) 를 포함한 v0.4.1 출시 — 향후 네이티브-라이브러리 리그레션이 사용자 첫 실행이 아니라 릴리즈 잡에서 실패하도록"
+    },
+    {
+      "en": "Bootstrap the Homebrew tap repo (`psmon/homebrew-codescan`) directly via `gh repo create --source=. --push`, then push a formula fix once `brew install` exposed that Homebrew auto-enters the tarball's single top-level dir, so `bin.install \"codescan/codescan\"` was resolving to `codescan/codescan/codescan`",
+      "ko": "`gh repo create --source=. --push` 로 Homebrew tap 레포 (`psmon/homebrew-codescan`) 직접 부트스트랩 후, `brew install` 이 Homebrew 가 tarball 의 단일 top-level dir 로 자동 chdir 한다는 사실을 노출하자 formula fix 푸시 — `bin.install \"codescan/codescan\"` 가 `codescan/codescan/codescan` 으로 풀려서 ENOENT"
+    }
+  ],
+  "solved": [
+    {
+      "en": "v0.4.2 ships end-to-end clean: 4-binary release with smoke-tested SQLite, live Homebrew tap (`brew tap psmon/codescan && brew install codescan` works), pre-generated winget manifest validated by `winget validate` and installable locally via the LocalManifestFiles opt-in, plus a packaging/winget/update-manifests.sh helper that mirrors the homebrew/update-formula.sh pattern",
+      "ko": "v0.4.2 가 end-to-end 깔끔하게 출시: SQLite smoke-test 까지 거친 4-바이너리 릴리즈, 라이브 Homebrew tap (`brew tap psmon/codescan && brew install codescan` 동작), `winget validate` 통과 + LocalManifestFiles opt-in 으로 로컬 설치 가능한 사전 생성 winget 매니페스트, packaging/winget/update-manifests.sh 헬퍼가 homebrew/update-formula.sh 패턴 미러링"
+    },
+    {
+      "en": "Direct script installers (install-win.ps1 + install.sh) verified end-to-end on Windows and WSL Debian — both download asset, verify SHA256 against checksums.txt, install to user-local path, and leave ~/.codescan/{db,logs,config} untouched",
+      "ko": "직접 스크립트 인스톨러 (install-win.ps1 + install.sh) 가 Windows + WSL Debian 에서 end-to-end 검증 — 자산 다운로드, checksums.txt 기준 SHA256 검증, 사용자-로컬 경로 설치, ~/.codescan/{db,logs,config} 보존"
+    },
+    {
+      "en": "README split into English (default) + README-KO.md (mirrored Korean) with a top-of-file language switcher and the new 'Why AOT?' bonus section linking to AgentZeroLite as the sibling on-device-model research project",
+      "ko": "README 를 영문 (기본) + README-KO.md (미러링된 한국어) 로 분리, 파일 상단 언어 스위처 + 자매 온디바이스-모델 연구 프로젝트로 AgentZeroLite 를 연결하는 새 'Why AOT?' 보너스 섹션"
+    }
+  ],
+  "remaining": [
+    {
+      "en": "Submit the winget manifest to microsoft/winget-pkgs so `winget install psmon.CodeScan` works without the LocalManifestFiles opt-in — manifest is ready at packaging/winget/manifests/p/psmon/CodeScan/0.4.2/, just needs a fork+PR or a wingetcreate run",
+      "ko": "`winget install psmon.CodeScan` 가 LocalManifestFiles opt-in 없이 동작하도록 winget 매니페스트를 microsoft/winget-pkgs 에 제출 — 매니페스트는 packaging/winget/manifests/p/psmon/CodeScan/0.4.2/ 에 준비됨, fork+PR 또는 wingetcreate 실행만 남음"
+    },
+    {
+      "en": "Publish codescan-cli to the npm registry so Linux users can `npm install -g codescan-cli` — the wrapper package itself is built and the postinstall hook is tested against the GitHub Release, just needs `npm publish --access public` with NPM_TOKEN configured",
+      "ko": "Linux 사용자가 `npm install -g codescan-cli` 할 수 있도록 codescan-cli 를 npm 레지스트리에 publish — 래퍼 패키지 자체는 빌드되어 있고 postinstall 훅이 GitHub Release 대상으로 테스트됨, NPM_TOKEN 설정 후 `npm publish --access public` 만 남음"
+    },
+    {
+      "en": "Flip the three `if: false` channel-publisher jobs in release.yml to `true` once each channel has gone through one successful manual submission, so future releases auto-update all three channels",
+      "ko": "각 채널이 한 번씩 수동 제출에 성공한 뒤 release.yml 의 3개 `if: false` 채널-퍼블리셔 잡을 `true` 로 전환해 향후 릴리즈가 3개 채널을 자동 갱신하도록"
+    }
+  ],
+  "learned": {
+    "lead": {
+      "en": "Release pipelines fail silently in two ways: (1) build succeeds with wrong artifacts (e.g. native libs left next to the binary in publish/), and (2) artifacts succeed but users can't reach them (channel manifest not in the official registry). The fix in both cases is to push the verification *into CI* — a one-line `codescan projects` smoke test catches (1), and a per-channel local-install validation step catches (2) before a release is cut.",
+      "ko": "릴리즈 파이프라인은 두 가지 방식으로 조용히 실패한다: (1) 빌드는 성공이지만 산출물이 잘못됨 (예: 네이티브 lib 가 publish/ 에 바이너리 옆에 남음), (2) 산출물은 성공이지만 사용자가 도달할 수 없음 (채널 매니페스트가 공식 레지스트리에 없음). 두 경우 모두 해결책은 검증을 *CI 안으로* 밀어 넣는 것 — 한 줄 `codescan projects` smoke test 가 (1) 을, 채널별 로컬-설치 검증 단계가 릴리즈 컷 전에 (2) 를 잡는다."
+    },
+    "body": {
+      "en": "v0.4.0 → v0.4.1 → v0.4.2 made the pattern visible. v0.4.0 passed all build jobs but only worked on Windows because the host machine happened to have a leftover e_sqlite3.dll from an older deploy-win.ps1 install; the cleanly-installed Linux binary crashed on first SQLite call. v0.4.1 fixed the underlying cause (`IncludeNativeLibrariesForSelfExtract=true`) *and* added a CI smoke step that actually runs the binary, so the same class of regression can't ship again — that step now blocks the release job before the GitHub Release publish step ever runs. v0.4.2 then extended the same verify-in-CI thinking to the channels: every release generates a winget manifest under packaging/winget/manifests/p/psmon/CodeScan/<version>/ with the real SHA256 from checksums.txt, and the update-manifests.sh + update-formula.sh helpers keep the substitution logic identical across channels. Channel publishers (winget/Homebrew/npm) are still `if: false` until each has been manually exercised once — once a channel has been proven, flipping the gate makes future releases atomic across the GitHub Release + all three channels.",
+      "ko": "v0.4.0 → v0.4.1 → v0.4.2 가 그 패턴을 가시화했다. v0.4.0 은 모든 빌드 잡을 통과했지만 Windows 에서만 동작 — 호스트 머신에 옛 deploy-win.ps1 설치에서 남은 e_sqlite3.dll 이 우연히 있어서. 깨끗하게 설치한 Linux 바이너리는 첫 SQLite 호출에서 크래시. v0.4.1 이 근본 원인 (`IncludeNativeLibrariesForSelfExtract=true`) 을 고치고 *동시에* 바이너리를 실제로 실행하는 CI smoke 단계를 추가 — 같은 유형의 리그레션은 다시는 출시될 수 없다 (GitHub Release publish 단계가 실행되기 전에 그 단계가 잡 차단). v0.4.2 는 이 verify-in-CI 사고를 채널로 확장: 모든 릴리즈가 packaging/winget/manifests/p/psmon/CodeScan/<version>/ 에 checksums.txt 의 실제 SHA256 으로 winget 매니페스트를 생성, update-manifests.sh + update-formula.sh 헬퍼가 채널 간 치환 로직을 동일하게 유지. 채널 퍼블리셔 (winget/Homebrew/npm) 는 각각 한 번씩 수동 검증되기 전까지 `if: false` — 채널이 입증되면 게이트를 풀어 향후 릴리즈가 GitHub Release + 3개 채널을 원자적으로 동시 갱신."
+    }
+  }
+}

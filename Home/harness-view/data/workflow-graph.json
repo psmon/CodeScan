@@ -1,0 +1,54 @@
+{
+  "_description": "Static — workflow graph for CodeScan. Each Core workflow has TWO diagrams: `mermaid` (high-level data/control flow) and `sourceMermaid` (the C# files & classes that implement it). The `file` field is informational — there is no canonical .md to open from the viewer; the source-files panel is the live reference instead.",
+  "workflows": [
+    {
+      "id": "scan-pipeline",
+      "label": "Scan & Index Pipeline",
+      "description": "scan / list command — traverses a project tree, extracts class:method definitions, comments, and dependency edges, enriches with git blame, and persists to SQLite with FTS5 + graph tables",
+      "mermaid": "flowchart LR\n  U[codescan scan path] --> DS[DirectoryScanner]\n  DS -->|file list| SA[SourceAnalyzer]\n  DS -->|file list| CE[CommentExtractor]\n  SA -->|methods| GB[GitBlameService]\n  GB -->|author, date| ST[SqliteStore]\n  CE -->|comments| ST\n  SA -->|deps| SGA[SourceGraphAnalyzer]\n  SGA -->|nodes + edges| ST\n  ST -->|FTS5 + graph tables| DB[(~/.codescan/db/codescan.db)]",
+      "sourceMermaid": "flowchart TB\n  subgraph Cmd[Commands/]\n    LC[ListCommand.cs]\n  end\n  subgraph Svc[Services/]\n    DS[DirectoryScanner.cs]\n    SA[SourceAnalyzer.cs]\n    CE[CommentExtractor.cs]\n    SGA[SourceGraphAnalyzer.cs]\n    GB[GitBlameService.cs]\n    ST[SqliteStore.cs]\n  end\n  LC --> DS\n  DS --> SA\n  DS --> CE\n  SA --> SGA\n  SA --> GB\n  CE --> ST\n  SGA --> ST\n  GB --> ST"
+    },
+    {
+      "id": "search-hybrid",
+      "label": "Hybrid Search (FTS5 + git log)",
+      "description": "search command combines indexed full-text search with live `git log --grep` results — covers both indexed content and commit-message context the index does not have",
+      "mermaid": "flowchart LR\n  U[codescan search query] --> SC[SearchCommand]\n  SC --> ST[SqliteStore.SearchFts5]\n  SC --> GLS[GitLogSearchService]\n  ST -->|FTS5 hits| MERGE[Merge + dedup]\n  GLS -->|git log --grep matches| MERGE\n  MERGE --> R[Ranked results]",
+      "sourceMermaid": "flowchart TB\n  subgraph Cmd[Commands/]\n    SC[SearchCommand.cs]\n  end\n  subgraph Svc[Services/]\n    ST[SqliteStore.cs<br/>FTS5 trigram tokenizer]\n    GLS[GitLogSearchService.cs<br/>subprocess git log --grep]\n  end\n  SC --> ST\n  SC --> GLS"
+    },
+    {
+      "id": "graph-query",
+      "label": "Cypher-like Graph Query",
+      "description": "query / cypher / graph command — parses a safe MATCH/WHERE/LIMIT subset and runs it against the graph_nodes + graph_edges tables, returning a GraphData result the CLI/TUI/GUI all render",
+      "mermaid": "flowchart LR\n  U[\"codescan query MATCH ...\"] --> GQ[GraphQuery parser]\n  GQ -->|pattern + filters| ST[SqliteStore.QueryGraph]\n  ST -->|nodes + edges| GD[GraphData]\n  GD --> CLI[CLI render]\n  GD --> TUI[TUI render]\n  GD --> GUI[GUI 2D/3D render]",
+      "sourceMermaid": "flowchart TB\n  subgraph Cmd[Commands/]\n    QC[QueryCommand.cs]\n  end\n  subgraph Svc[Services/]\n    GQ[GraphQuery.cs<br/>MATCH/WHERE/LIMIT parser]\n    GM[GraphModels.cs<br/>GraphData DTO]\n    ST[SqliteStore.cs<br/>graph_nodes + graph_edges]\n  end\n  QC --> GQ\n  GQ --> ST\n  ST --> GM"
+    },
+    {
+      "id": "tui-flow",
+      "label": "Interactive TUI",
+      "description": "tui command — Terminal.Gui v2 (NetDriver) state machine. Project list → scan/search/graph screens, all reading from the same SqliteStore",
+      "mermaid": "flowchart LR\n  U[codescan tui] --> APP[TuiApp]\n  APP --> HOME[Home menu]\n  HOME --> PRJ[Projects screen]\n  HOME --> SCAN[Scan screen]\n  HOME --> KW[Keyword search]\n  HOME --> GR[Graph search]\n  PRJ --> ST[(SqliteStore)]\n  SCAN --> ST\n  KW --> ST\n  GR --> ST",
+      "sourceMermaid": "flowchart TB\n  subgraph Tui[Tui/]\n    TA[TuiApp.cs<br/>state machine root]\n  end\n  subgraph Svc[Services/]\n    ST[SqliteStore.cs]\n    DS[DirectoryScanner.cs]\n    SA[SourceAnalyzer.cs]\n  end\n  TA --> ST\n  TA --> DS\n  TA --> SA"
+    },
+    {
+      "id": "gui-flow",
+      "label": "Local Web GUI",
+      "description": "gui start command — boots a local HTTP server (default port 8085), serves a static SPA, and exposes JSON endpoints over the same SqliteStore. Browser-side renders 2D and 3D graph views",
+      "mermaid": "flowchart LR\n  U[codescan gui start --port 8085] --> SRV[HTTP server<br/>127.0.0.1:8085]\n  SRV -->|GET /| SPA[Static SPA]\n  SPA -->|fetch /api/search| API[JSON API]\n  SPA -->|fetch /api/graph| API\n  SPA -->|fetch /api/query| API\n  API --> ST[(SqliteStore)]\n  SPA --> R2D[2D graph canvas]\n  SPA --> R3D[3D graph view]",
+      "sourceMermaid": "flowchart TB\n  subgraph Cmd[Commands/]\n    GUI[GuiCommand.cs]\n  end\n  subgraph Svc[Services/]\n    GS[GuiServer + handlers]\n    ST[SqliteStore.cs]\n  end\n  GUI --> GS\n  GS --> ST"
+    },
+    {
+      "id": "release-pipeline",
+      "label": "Release Pipeline",
+      "description": "version.txt → annotated git tag → release.yml matrix builds 4 native binaries with embedded SQLite native libs → CycloneDX SBOM + SHA256 checksums → GitHub Release publish → smoke test (--version + projects) guards every native-arch build",
+      "mermaid": "graph LR\n  V[version.txt] --> T[git tag v*]\n  T --> P[git push --tags]\n  P --> GA[release.yml<br/>matrix build]\n  GA --> SBOM[CycloneDX SBOM]\n  GA --> CK[SHA256 checksums.txt]\n  GA --> SMK[CI smoke test<br/>--version + projects]\n  SMK --> REL[GitHub Release]\n  SBOM --> REL\n  CK --> REL",
+      "sourceMermaid": "flowchart TB\n  subgraph Repo[/]\n    VT[version.txt]\n    CSP[CodeScan.csproj<br/>AutoBumpVersion target<br/>SkipAutoBumpVersion gate]\n  end\n  subgraph CI[.github/workflows]\n    REL[release.yml<br/>tags v*]\n  end\n  CSP -.bumps.-> VT\n  VT --> REL"
+    },
+    {
+      "id": "install-channels",
+      "label": "Install Channels",
+      "description": "Same GitHub Release feeds all install channels — winget (portable), Homebrew tap (psmon/homebrew-codescan), npm wrapper (codescan-cli with postinstall download). Plus direct script installers (install-win.ps1 / install.sh) for environments without a package manager",
+      "mermaid": "flowchart LR\n  REL[(GitHub Release v*)] --> WG[winget portable<br/>microsoft/winget-pkgs PR]\n  REL --> BR[Homebrew tap<br/>psmon/homebrew-codescan]\n  REL --> NP[npm postinstall<br/>codescan-cli]\n  REL --> SW[install-win.ps1]\n  REL --> SL[install.sh]\n  WG -->|Windows x64| U1[User]\n  BR -->|macOS arm64| U1\n  NP -->|Linux x64/arm64| U1\n  SW --> U1\n  SL --> U1",
+      "sourceMermaid": "flowchart TB\n  subgraph Pkg[packaging/]\n    WGM[winget/manifests/<br/>p/psmon/CodeScan/]\n    HB[homebrew/codescan.rb<br/>+ update-formula.sh]\n    NPM[npm/codescan-cli/<br/>scripts/install.js]\n  end\n  subgraph Scr[Script/]\n    SW[install-win.ps1]\n    SL[install.sh]\n  end\n  subgraph CI[.github/workflows/release.yml]\n    PW[publish-winget<br/>if:false v1]\n    PH[publish-homebrew<br/>if:false v1]\n    PN[publish-npm<br/>if:false v1]\n  end\n  PW -.uses.-> WGM\n  PH -.uses.-> HB\n  PN -.uses.-> NPM"
+    }
+  ]
+}
