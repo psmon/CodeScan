@@ -24,6 +24,11 @@
     <ItemGroup>
         <Folder Include="Prompt\TestFileDB\" />
         <Compile Remove="Tests\**" />
+        <!-- TestSample/ holds multi-language e2e fixtures; never compile them into codescan itself. -->
+        <Compile Remove="TestSample\**" />
+        <Content Remove="TestSample\**" />
+        <None Remove="TestSample\**" />
+        <EmbeddedResource Remove="TestSample\**" />
     </ItemGroup>
 
     <ItemGroup>
