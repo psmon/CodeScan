@@ -300,7 +300,14 @@ public static class GuiCommand
     aside, .detail { background:var(--surface); overflow:auto; }
     aside { border-right:1px solid var(--line); padding:14px; }
     .detail { border-left:1px solid var(--line); display:flex; flex-direction:column; }
-    .stage { min-width:0; position:relative; background:#f8fafc; }
+    .stage { min-width:0; position:relative; background:#f8fafc; transition:background .25s ease; }
+    .stage.mode-3d {
+      background:
+        radial-gradient(ellipse at 18% 12%, rgba(139,92,246,.20), transparent 42%),
+        radial-gradient(ellipse at 82% 18%, rgba(236,72,153,.13), transparent 44%),
+        radial-gradient(ellipse at 50% 100%, rgba(34,211,238,.12), transparent 52%),
+        #060914;
+    }
     label { display:block; font-size:12px; color:var(--muted); margin:12px 0 5px; }
     input, select { width:100%; height:34px; border:1px solid var(--line); border-radius:6px; padding:0 9px; background:white; color:var(--ink); }
     button { height:34px; border:1px solid #aab6c4; background:#fff; border-radius:6px; padding:0 11px; color:var(--ink); cursor:pointer; }
@@ -311,9 +318,13 @@ public static class GuiCommand
     .check { display:flex; gap:8px; align-items:center; margin:8px 0; color:var(--muted); font-size:12px; }
     .check input { width:auto; height:auto; }
     #graphCanvas { width:100%; height:100%; display:block; cursor:grab; }
+    #graphCanvas.space-mode { background:#060914; }
     #graphCanvas.dragging { cursor:grabbing; }
     .toolbar { position:absolute; left:14px; top:14px; display:flex; gap:8px; flex-wrap:wrap; max-width:calc(100% - 28px); }
     .hintbar { position:absolute; left:14px; bottom:12px; right:14px; color:#617083; font-size:12px; pointer-events:none; display:flex; justify-content:space-between; gap:10px; }
+    .stage.mode-3d .toolbar button { color:#dbeafe; border-color:rgba(125,211,252,.42); background:rgba(10,16,34,.72); box-shadow:0 0 18px rgba(34,211,238,.10); backdrop-filter:blur(10px); }
+    .stage.mode-3d .toolbar button.active { color:#67e8f9; border-color:#22d3ee; background:rgba(8,47,73,.74); box-shadow:0 0 24px rgba(34,211,238,.22); }
+    .stage.mode-3d .hintbar { color:#b6c7e6; text-shadow:0 0 14px rgba(34,211,238,.36); }
     .legend { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0 12px; }
     .chip { border:1px solid var(--line); border-radius:999px; padding:4px 8px; font-size:12px; cursor:pointer; user-select:none; background:#fff; }
     .chip.off { opacity:.42; text-decoration:line-through; }
@@ -359,7 +370,7 @@ public static class GuiCommand
       <div class="legend" id="legend"></div>
       <div class="list" id="list"></div>
     </aside>
-    <section class="stage">
+    <section class="stage" id="stage">
       <canvas id="graphCanvas"></canvas>
       <div class="toolbar">
         <button id="view2d" class="active">2D</button>
@@ -385,10 +396,10 @@ public static class GuiCommand
     const state = {
       graph:{nodes:[], edges:[]}, visibleKinds:new Set(), selected:null, hovered:null, mode:"2d",
       view:{x:0,y:0,zoom:1}, camera:{yaw:-0.45,pitch:0.55,distance:720,x:0,y:0},
-      pointer:null, dragNode:null, screen:new Map(), edgeScreen:[]
+      pointer:null, dragNode:null, screen:new Map(), edgeScreen:[], stars:[], animation:null, time:0
     };
     let cw = 800, ch = 600;
-    function fitCanvas(){ const r=canvas.getBoundingClientRect(); const d=devicePixelRatio||1; cw=Math.max(320,r.width); ch=Math.max(260,r.height); canvas.width=Math.round(cw*d); canvas.height=Math.round(ch*d); ctx.setTransform(d,0,0,d,0,0); }
+    function fitCanvas(){ const r=canvas.getBoundingClientRect(); const d=devicePixelRatio||1; cw=Math.max(320,r.width); ch=Math.max(260,r.height); const w=Math.round(cw*d), h=Math.round(ch*d); if(canvas.width!==w || canvas.height!==h){ canvas.width=w; canvas.height=h; if(state.mode==="3d") state.stars=[]; } ctx.setTransform(d,0,0,d,0,0); }
     addEventListener("resize", () => { fitCanvas(); draw(); });
     fitCanvas();
     async function api(path){ const r=await fetch(path); if(!r.ok) throw new Error(await r.text()); return await r.json(); }
@@ -403,7 +414,15 @@ public static class GuiCommand
     $("resetCamera").onclick = () => { state.view={x:0,y:0,zoom:1}; state.camera={yaw:-0.45,pitch:0.55,distance:720,x:0,y:0}; fitView(); draw(); };
     $("view2d").onclick = () => setMode("2d");
     $("view3d").onclick = () => setMode("3d");
-    function setMode(mode){ state.mode=mode; $("view2d").classList.toggle("active",mode==="2d"); $("view3d").classList.toggle("active",mode==="3d"); $("modeHint").textContent = mode==="2d" ? "2D: drag canvas to pan, wheel to zoom, drag node to reposition" : "3D: drag to orbit, Shift/right-drag to pan, wheel to zoom"; draw(); }
+    function setMode(mode){
+      state.mode=mode;
+      const is3d=mode==="3d";
+      $("view2d").classList.toggle("active",!is3d); $("view3d").classList.toggle("active",is3d);
+      $("stage").classList.toggle("mode-3d",is3d); canvas.classList.toggle("space-mode",is3d);
+      $("modeHint").textContent = is3d ? "3D: drag to orbit, Shift/right-drag to pan, wheel to zoom" : "2D: drag canvas to pan, wheel to zoom, drag node to reposition";
+      if(is3d) startSpaceAnimation(); else stopSpaceAnimation();
+      draw();
+    }
     function setGraph(data){
       state.graph = { nodes:(data.nodes||[]).map(n=>({...n})), edges:(data.edges||[]).map(e=>({...e})) };
       state.selected=null; layoutGraph(); buildLegend(); renderList(); fitView(); draw();
@@ -427,10 +446,82 @@ public static class GuiCommand
     function renderKeywordResults(rows){ $("stats").textContent=`${rows.length} keyword results`; $("list").innerHTML=""; for(const r of rows){ const d=document.createElement("div"); d.className="item"; d.innerHTML=`<span class="tag">${escapeHtml(r.type)}</span>${escapeHtml(r.name)}<div class="meta">${escapeHtml(r.path||"")}</div><div class="meta">${escapeHtml(r.excerpt||"")}</div>`; $("list").appendChild(d); } }
     function fitView(){ const ns=state.graph.nodes.filter(visibleNode); if(!ns.length){state.view={x:0,y:0,zoom:1}; return;} let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity; for(const n of ns){minX=Math.min(minX,n.x);maxX=Math.max(maxX,n.x);minY=Math.min(minY,n.y);maxY=Math.max(maxY,n.y);} const sx=cw/Math.max(80,maxX-minX+120), sy=ch/Math.max(80,maxY-minY+120); state.view.zoom=Math.min(2.2,Math.max(.35,Math.min(sx,sy))); state.view.x=cw/2-(minX+maxX)/2*state.view.zoom; state.view.y=ch/2-(minY+maxY)/2*state.view.zoom; }
     function worldToScreen(n){ if(state.mode==="2d") return {x:n.x*state.view.zoom+state.view.x,y:n.y*state.view.zoom+state.view.y,s:state.view.zoom,z:0}; const cam=state.camera, cyaw=Math.cos(cam.yaw), syaw=Math.sin(cam.yaw), cp=Math.cos(cam.pitch), sp=Math.sin(cam.pitch); let x=n.x, y=n.y, z=n.z||0; let x1=x*cyaw-z*syaw, z1=x*syaw+z*cyaw; let y1=y*cp-z1*sp, z2=y*sp+z1*cp; const s=cam.distance/(cam.distance+z2+320); return {x:cw/2+cam.x+x1*s,y:ch/2+cam.y+y1*s,s,z:z2}; }
-    function draw(){ fitCanvas(); ctx.clearRect(0,0,cw,ch); ctx.fillStyle="#f8fafc"; ctx.fillRect(0,0,cw,ch); drawGrid(); const map=new Map(state.graph.nodes.map(n=>[n.id,n])); state.screen.clear(); state.edgeScreen=[]; const edges=state.graph.edges.filter(e=>visibleEdge(e,map)); for(const e of edges){ const a=map.get(e.from), b=map.get(e.to), p=worldToScreen(a), q=worldToScreen(b); state.edgeScreen.push({edge:e,p,q}); drawEdge(e,p,q); } const nodes=state.graph.nodes.filter(visibleNode).map(n=>({n,p:worldToScreen(n)})).sort((a,b)=>a.p.z-b.p.z); for(const it of nodes){ state.screen.set(it.n.id,it.p); drawNode(it.n,it.p); } }
+    function draw(){ fitCanvas(); ctx.clearRect(0,0,cw,ch); if(state.mode==="3d") drawSpaceBackground(); else { ctx.fillStyle="#f8fafc"; ctx.fillRect(0,0,cw,ch); drawGrid(); } const map=new Map(state.graph.nodes.map(n=>[n.id,n])); state.screen.clear(); state.edgeScreen=[]; const edges=state.graph.edges.filter(e=>visibleEdge(e,map)); for(const e of edges){ const a=map.get(e.from), b=map.get(e.to), p=worldToScreen(a), q=worldToScreen(b); state.edgeScreen.push({edge:e,p,q}); drawEdge(e,p,q); } const nodes=state.graph.nodes.filter(visibleNode).map(n=>({n,p:worldToScreen(n)})).sort((a,b)=>a.p.z-b.p.z); for(const it of nodes){ state.screen.set(it.n.id,it.p); drawNode(it.n,it.p); } ctx.shadowBlur=0; ctx.globalAlpha=1; }
     function drawGrid(){ ctx.strokeStyle="#e8edf3"; ctx.lineWidth=1; const step=48; const ox=state.mode==="2d"?state.view.x%step:0, oy=state.mode==="2d"?state.view.y%step:0; for(let x=ox;x<cw;x+=step){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,ch);ctx.stroke();} for(let y=oy;y<ch;y+=step){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(cw,y);ctx.stroke();} }
-    function drawEdge(e,p,q){ const active=state.selected?.type==="edge"&&state.selected.item.id===e.id; ctx.strokeStyle=active?"#0b7285":"#b9c4d0"; ctx.lineWidth=active?2.8:1.2; ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(q.x,q.y); ctx.stroke(); if($("edgeLabels").checked && (active || e.kind)){ const mx=(p.x+q.x)/2, my=(p.y+q.y)/2; ctx.fillStyle="rgba(255,255,255,.9)"; const text=e.kind||e.label||""; ctx.font="11px system-ui"; const w=ctx.measureText(text).width+10; ctx.fillRect(mx-w/2,my-9,w,16); ctx.fillStyle="#536173"; ctx.fillText(text,mx-w/2+5,my+3); } }
-    function drawNode(n,p){ const active=state.selected?.type==="node"&&state.selected.item.id===n.id; const r=Math.max(4,n.r*(state.mode==="3d"?p.s:1)); ctx.fillStyle=colors[n.kind]||"#748094"; ctx.strokeStyle=active?"#111827":"#fff"; ctx.lineWidth=active?3:1.5; ctx.beginPath(); if(n.kind==="file"||n.kind==="doc") roundedRect(p.x-r,p.y-r*.75,r*2,r*1.5,4); else ctx.arc(p.x,p.y,r,0,Math.PI*2); ctx.fill(); ctx.stroke(); if($("labels").checked || active){ ctx.font=active?"700 12px system-ui":"12px system-ui"; ctx.fillStyle="#15202b"; ctx.fillText(trim(n.label,36),p.x+r+6,p.y-6); } }
+    function drawSpaceBackground(){
+      ensureStars();
+      const g=ctx.createRadialGradient(cw*.5,ch*.48,20,cw*.5,ch*.5,Math.max(cw,ch)*.72);
+      g.addColorStop(0,"#111a3a"); g.addColorStop(.46,"#080d20"); g.addColorStop(1,"#03050c");
+      ctx.fillStyle=g; ctx.fillRect(0,0,cw,ch);
+      const t=state.time||performance.now()*.001;
+      for(const s of state.stars){
+        const drift=(t*s.speed*10)%cw, x=(s.x+drift*s.z)%cw, y=s.y+Math.sin(t*s.speed+s.phase)*5*s.z;
+        const tw=.44+.46*Math.sin(t*(1.2+s.speed)+s.phase);
+        ctx.globalAlpha=Math.max(.18,tw)*s.z;
+        ctx.fillStyle=s.hue%3===0?"#e0f2fe":s.hue%3===1?"#c4b5fd":"#fbcfe8";
+        ctx.beginPath(); ctx.arc(x,y,s.size*s.z,0,Math.PI*2); ctx.fill();
+      }
+      ctx.globalAlpha=1;
+      drawSpaceGrid(t);
+    }
+    function drawSpaceGrid(t){
+      const cx=cw/2+state.camera.x*.16, cy=ch/2+state.camera.y*.16, maxR=Math.max(cw,ch)*.72;
+      ctx.save();
+      ctx.translate(cx,cy);
+      ctx.rotate(state.camera.yaw*.18);
+      for(let r=96;r<maxR;r+=96){
+        ctx.strokeStyle=`rgba(34,211,238,${Math.max(.025,.11-r/maxR*.08)})`;
+        ctx.lineWidth=1;
+        ctx.beginPath(); ctx.ellipse(0,0,r,r*.34,0,0,Math.PI*2); ctx.stroke();
+      }
+      for(let a=0;a<Math.PI*2;a+=Math.PI/8){
+        ctx.strokeStyle="rgba(167,139,250,.055)";
+        ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(Math.cos(a)*maxR,Math.sin(a)*maxR*.34); ctx.stroke();
+      }
+      ctx.restore();
+      const scanY=(t*42)%Math.max(1,ch);
+      const beam=ctx.createLinearGradient(0,scanY-38,0,scanY+38);
+      beam.addColorStop(0,"rgba(34,211,238,0)"); beam.addColorStop(.5,"rgba(34,211,238,.055)"); beam.addColorStop(1,"rgba(34,211,238,0)");
+      ctx.fillStyle=beam; ctx.fillRect(0,scanY-38,cw,76);
+    }
+    function ensureStars(){
+      const target=Math.max(150,Math.min(320,Math.round(cw*ch/4200)));
+      if(state.stars.length===target) return;
+      state.stars=[];
+      for(let i=0;i<target;i++) state.stars.push({ x:rnd(i,1)*cw, y:rnd(i,2)*ch, z:.28+rnd(i,3)*.9, size:.55+rnd(i,4)*1.75, phase:rnd(i,5)*Math.PI*2, speed:.12+rnd(i,6)*.72, hue:i });
+    }
+    function rnd(i,s){ const x=Math.sin((i+1)*(s*97.13))*10000; return x-Math.floor(x); }
+    function startSpaceAnimation(){ if(state.animation) return; const tick=now=>{ state.animation=requestAnimationFrame(tick); state.time=now*.001; if(state.mode==="3d") draw(); }; state.animation=requestAnimationFrame(tick); }
+    function stopSpaceAnimation(){ if(!state.animation) return; cancelAnimationFrame(state.animation); state.animation=null; }
+    function drawEdge(e,p,q){
+      const active=state.selected?.type==="edge"&&state.selected.item.id===e.id;
+      if(state.mode==="3d"){
+        const depth=Math.max(.28,Math.min(1.15,(p.s+q.s)/2));
+        const grd=ctx.createLinearGradient(p.x,p.y,q.x,q.y);
+        grd.addColorStop(0,active?"#f472b6":"rgba(34,211,238,.78)");
+        grd.addColorStop(1,active?"#67e8f9":"rgba(167,139,250,.62)");
+        ctx.strokeStyle=grd; ctx.lineWidth=(active?2.9:1.15)*depth; ctx.shadowColor=active?"rgba(236,72,153,.68)":"rgba(34,211,238,.32)"; ctx.shadowBlur=active?18:8;
+        ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(q.x,q.y); ctx.stroke(); ctx.shadowBlur=0;
+        if($("edgeLabels").checked && (active || e.kind)){ const mx=(p.x+q.x)/2, my=(p.y+q.y)/2; const text=e.kind||e.label||""; ctx.font="11px system-ui"; const w=ctx.measureText(text).width+12; ctx.fillStyle="rgba(4,9,22,.78)"; ctx.fillRect(mx-w/2,my-10,w,18); ctx.fillStyle=active?"#f9a8d4":"#bae6fd"; ctx.fillText(text,mx-w/2+6,my+3); }
+        return;
+      }
+      ctx.strokeStyle=active?"#0b7285":"#b9c4d0"; ctx.lineWidth=active?2.8:1.2; ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(q.x,q.y); ctx.stroke(); if($("edgeLabels").checked && (active || e.kind)){ const mx=(p.x+q.x)/2, my=(p.y+q.y)/2; ctx.fillStyle="rgba(255,255,255,.9)"; const text=e.kind||e.label||""; ctx.font="11px system-ui"; const w=ctx.measureText(text).width+10; ctx.fillRect(mx-w/2,my-9,w,16); ctx.fillStyle="#536173"; ctx.fillText(text,mx-w/2+5,my+3); }
+    }
+    function drawNode(n,p){
+      const active=state.selected?.type==="node"&&state.selected.item.id===n.id;
+      const r=Math.max(4,n.r*(state.mode==="3d"?p.s:1));
+      if(state.mode==="3d"){
+        const base=colors[n.kind]||"#748094", pulse=active?1+Math.sin((state.time||0)*4)*.08:1;
+        const grad=ctx.createRadialGradient(p.x-r*.35,p.y-r*.45,1,p.x,p.y,r*1.6*pulse);
+        grad.addColorStop(0,"#ffffff"); grad.addColorStop(.22,base); grad.addColorStop(1,"rgba(12,18,36,.18)");
+        ctx.fillStyle=grad; ctx.strokeStyle=active?"#f9a8d4":"rgba(219,234,254,.86)"; ctx.lineWidth=active?2.8:1.15; ctx.shadowColor=active?"rgba(236,72,153,.78)":"rgba(34,211,238,.34)"; ctx.shadowBlur=active?28:12;
+        ctx.beginPath(); if(n.kind==="file"||n.kind==="doc") roundedRect(p.x-r,p.y-r*.75,r*2,r*1.5,4); else ctx.arc(p.x,p.y,r*pulse,0,Math.PI*2); ctx.fill(); ctx.stroke(); ctx.shadowBlur=0;
+        if(active){ ctx.strokeStyle="rgba(34,211,238,.45)"; ctx.lineWidth=1.1; ctx.beginPath(); ctx.arc(p.x,p.y,r*2.15+Math.sin((state.time||0)*3)*3,0,Math.PI*2); ctx.stroke(); }
+        if($("labels").checked || active){ ctx.font=active?"700 12px system-ui":"12px system-ui"; ctx.fillStyle=active?"#fce7f3":"#dbeafe"; ctx.shadowColor="rgba(3,7,18,.9)"; ctx.shadowBlur=8; ctx.fillText(trim(n.label,36),p.x+r+7,p.y-6); ctx.shadowBlur=0; }
+        return;
+      }
+      ctx.fillStyle=colors[n.kind]||"#748094"; ctx.strokeStyle=active?"#111827":"#fff"; ctx.lineWidth=active?3:1.5; ctx.beginPath(); if(n.kind==="file"||n.kind==="doc") roundedRect(p.x-r,p.y-r*.75,r*2,r*1.5,4); else ctx.arc(p.x,p.y,r,0,Math.PI*2); ctx.fill(); ctx.stroke(); if($("labels").checked || active){ ctx.font=active?"700 12px system-ui":"12px system-ui"; ctx.fillStyle="#15202b"; ctx.fillText(trim(n.label,36),p.x+r+6,p.y-6); }
+    }
     function roundedRect(x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y); ctx.quadraticCurveTo(x+w,y,x+w,y+r); ctx.lineTo(x+w,y+h-r); ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h); ctx.lineTo(x+r,y+h); ctx.quadraticCurveTo(x,y+h,x,y+h-r); ctx.lineTo(x,y+r); ctx.quadraticCurveTo(x,y,x+r,y); }
     function pickNode(x,y){ let best=null, bd=Infinity; for(const n of state.graph.nodes.filter(visibleNode)){ const p=state.screen.get(n.id); if(!p) continue; const d=Math.hypot(x-p.x,y-p.y), r=Math.max(7,n.r*(state.mode==="3d"?p.s:state.view.zoom)); if(d<r+5 && d<bd){ best=n; bd=d; } } return best; }
     function pickEdge(x,y){ let best=null, bd=9; for(const it of state.edgeScreen){ const d=distToSegment(x,y,it.p.x,it.p.y,it.q.x,it.q.y); if(d<bd){best=it.edge;bd=d;} } return best; }
