@@ -1,0 +1,18 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+#
+PackageIdentifier: psmon.CodeScan
+PackageVersion: 0.5.0
+InstallerType: portable
+Commands:
+  - codescan
+ReleaseDate: 2026-05-17
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/psmon/CodeScan/releases/download/v0.5.0/codescan-win-x64.zip
+    InstallerSha256: 224D3EAE75F099C395B088C0604A5E5116BBEB85C4A55F21837CB668F8479DA0
+    NestedInstallerType: portable
+    NestedInstallerFiles:
+      - RelativeFilePath: codescan\codescan.exe
+        PortableCommandAlias: codescan
+ManifestType: installer
+ManifestVersion: 1.6.0
