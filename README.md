@@ -6,27 +6,31 @@ Built as a single native AOT binary with .NET 10.0.
 
 ## Features
 
-- **Multi-language analysis** — Extracts classes, methods, and comments from 7 languages
+- **Multi-language analysis** — Extracts classes, methods, comments, and dependency hints across common source languages
 - **Git blame integration** — Associates each method with its last author, date, and commit
 - **Full-text search** — FTS5 with trigram tokenizer for substring and CJK language support
 - **Hybrid search** — Combines indexed DB search with live `git log --grep` results
 - **Graph search** — Neo4j-style source knowledge graph stored in embedded SQLite
-- **Interactive TUI** — Terminal.Gui v2 interface for browsing, scanning, and searching
-- **Local web GUI** — Keyword search, graph search, and 2D/3D graph views on port 8085 by default
+- **Hybrid dependency graphing** — Regex-first dependency edges, with language/project metadata probes for future semantic analyzers
+- **Interactive TUI** — Terminal.Gui v2 interface for browsing, scanning, keyword search, and graph search
+- **Local web GUI** — Keyword search, graph search, interactive 2D graph exploration, and controllable 3D view on port 8085 by default
 - **Project management** — Register, describe, update, and delete indexed projects
 - **Single binary** — Native AOT compiled, no runtime dependency required
 
 ## Supported Languages
 
-| Language | Extensions | Class Detection | Method Detection |
-|----------|-----------|-----------------|-----------------|
-| C# | `.cs` | class / struct / record / interface | access + return + name |
-| Java | `.java` | class / interface / enum | access + return + name |
-| Kotlin | `.kt`, `.kts` | class / object / data class / sealed class | fun / suspend fun |
-| JavaScript | `.js`, `.jsx` | class | function / arrow / const / export |
-| TypeScript | `.ts`, `.tsx` | class | function / arrow / const / export |
-| PHP | `.php` | class / interface / trait | function |
-| Python | `.py` | class (indent-based) | def / async def (indent-based) |
+| Language | Extensions | Class / Type Detection | Method Detection | Dependency Hints |
+|----------|-----------|------------------------|------------------|------------------|
+| C# | `.cs` | class / struct / record / interface | access + return + name | using, inheritance/interface, `new`, type usage |
+| Java | `.java` | class / interface / enum | access + return + name | import, extends/implements, `new`, type usage |
+| Kotlin | `.kt`, `.kts` | class / object / data class / sealed class | fun / suspend fun | import, base type, constructor/type usage |
+| JavaScript | `.js`, `.jsx` | class | function / arrow / const / export | import, extends/implements-style hints, `new`, type-like usage |
+| TypeScript | `.ts`, `.tsx` | class | function / arrow / const / export | import, extends/implements, `new`, type annotations |
+| PHP | `.php` | class / interface / trait | function | use, extends/implements, `new`, type hints |
+| Python | `.py` | class (indent-based) | def / async def (indent-based) | import, base class, constructor-like calls |
+| Go | `.go` | type struct/interface | graph dependency scan only | import, constructor/type usage |
+| Rust | `.rs` | struct / enum / trait | graph dependency scan only | use, associated constructor/type usage |
+| C/C++ | `.c`, `.cc`, `.cpp`, `.cxx`, `.h`, `.hpp`, `.hh`, `.hxx` | class / struct | graph dependency scan only | include, inheritance, `new`, type usage |
 
 ## Installation
 
@@ -126,7 +130,23 @@ codescan gui start --port 8090
 codescan gui stop
 ```
 
-Open `http://127.0.0.1:8085/` after starting the GUI. The viewer provides keyword search, graph search, a Neo4jClient-like 2D graph canvas, and a simple 3D graph view.
+Open `http://127.0.0.1:8085/` after starting the GUI. The viewer provides keyword search, graph search, a Neo4jClient-like 2D graph canvas, and a controllable 3D graph view.
+
+GUI graph controls:
+
+| Control | Behavior |
+|---------|----------|
+| 2D drag background | Pan the graph |
+| 2D mouse wheel | Zoom around the cursor |
+| 2D drag node | Reposition a node |
+| Node click | Show node detail and visible relationships |
+| Edge click | Show relationship detail |
+| Legend chips | Toggle node kinds on/off |
+| `Fit` | Fit visible nodes into the canvas |
+| `Reset Camera` | Reset 2D viewport or 3D camera |
+| 3D drag | Orbit camera |
+| 3D Shift-drag / right-drag | Pan camera |
+| 3D mouse wheel | Zoom camera |
 
 ### List Options
 
@@ -165,7 +185,43 @@ All data is stored under `~/.codescan/`:
 | `project_docs` | Auto-discovered README / AGENT / CLAUDE.md content |
 | `search_index` | FTS5 virtual table (trigram tokenizer) |
 | `graph_nodes` | Source graph nodes: projects, directories, files, classes, methods, comments, docs, authors |
-| `graph_edges` | Source graph relationships: contains, defines, authored, documents, comments |
+| `graph_edges` | Source graph relationships: contains, defines, authored, documents, comments, imports, creates, uses_type, inherits_or_implements |
+
+### Graph Edge Rules
+
+Structural edges:
+
+| Edge | Meaning |
+|------|---------|
+| `project -[contains]-> directory/file` | Project file tree |
+| `directory -[contains]-> directory/file` | Directory file tree |
+| `file -[contains]-> class` | Class/type found in a source file |
+| `class/file -[defines]-> method` | Method/function definition |
+| `file -[has_comment]-> comment` | Comment block found in a source file |
+| `author -[authored]-> method` | Git blame last-author relationship |
+| `project -[documents]-> doc` | Auto-discovered project document |
+
+Dependency hint edges:
+
+| Edge | Source |
+|------|--------|
+| `file/class -[imports]-> module` | `using`, `import`, `use`, `#include` |
+| `class -[inherits_or_implements]-> type` | Base class / interface / trait-style declarations |
+| `class -[creates]-> type` | Constructor or constructor-like calls such as `new Type()` |
+| `class -[uses_type]-> type` | Type annotations, fields, parameters, returns, or local declarations detected by regex strategy |
+
+The dependency graph is intentionally hybrid. CodeScan first uses language-neutral regex strategies so graph edges exist even when the project cannot be built. It also probes for semantic analysis capability using project metadata:
+
+| Language | Semantic Probe |
+|----------|----------------|
+| C# | `.sln`, `.csproj` for future Roslyn analyzers |
+| Java | `pom.xml`, `build.gradle`, `build.gradle.kts` for future JDT/Spoon analyzers |
+| TypeScript/JavaScript | `tsconfig.json`, `jsconfig.json` for future TypeScript Compiler API analyzers |
+| Go | `go.mod`, `go.work` for future `go/packages` analyzers |
+| Rust | `Cargo.toml` for future rust-analyzer/Cargo metadata analyzers |
+| C/C++ | `compile_commands.json` for future Clang LibTooling analyzers |
+
+Current semantic probes detect whether the required project model exists; regex remains the active fallback until a language-specific semantic strategy is added.
 
 ## Architecture
 
@@ -173,10 +229,11 @@ All data is stored under `~/.codescan/`:
 CodeScan/
 ├── Program.cs                  # Entry point and CLI routing
 ├── Commands/                   # Command implementations
-├── Models/                     # Data structures (FileEntry, MethodEntry, CommentBlock)
+├── Models/                     # Data structures (FileEntry, MethodEntry, CommentBlock, SourceDependency)
 ├── Services/                   # Core logic
 │   ├── DirectoryScanner.cs     #   Recursive traversal with filtering
 │   ├── SourceAnalyzer.cs       #   Multi-language class/method extraction
+│   ├── SourceGraphAnalyzer.cs  #   Hybrid dependency edge extraction
 │   ├── CommentExtractor.cs     #   Comment extraction with context
 │   ├── GitBlameService.cs      #   Git blame per method
 │   ├── GitLogSearchService.cs  #   Hybrid git log search
@@ -203,6 +260,8 @@ CodeScan/
 - **Markdown always included** — `.md` files are always indexed even when `--include` filters are active
 - **Git root detection** — Walks directory tree to find `.git/` without spawning subprocesses
 - **Trigram FTS** — Enables effective substring search for CJK languages (Korean, Chinese, Japanese)
+- **Regex-first graphing** — Produces dependency graph hints without requiring a successful build
+- **Semantic-ready strategy layer** — Language-specific compiler analyzers can be added behind `ISourceDependencyStrategy`
 
 ## License
 
