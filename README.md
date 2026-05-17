@@ -4,6 +4,10 @@ A fast CLI/TUI/GUI code scanner and indexer that analyzes source code at the cla
 
 Built as a single native AOT binary with .NET 10.0.
 
+<p align="center">
+  <img src="Home/img/codescan.png" alt="CodeScan hero card" width="860" />
+</p>
+
 ## Features
 
 - **Multi-language analysis** — Extracts classes, methods, comments, and dependency hints across common source languages
@@ -16,6 +20,26 @@ Built as a single native AOT binary with .NET 10.0.
 - **Local web GUI** — Keyword search, graph search, interactive 2D graph exploration, and controllable 3D view on port 8085 by default
 - **Project management** — Register, describe, update, and delete indexed projects
 - **Single binary** — Native AOT compiled, no runtime dependency required
+
+## Screenshots
+
+### Web GUI Graph Viewer
+
+The local GUI provides keyword search, graph search, node/edge detail inspection, 2D graph controls, and a camera-controlled 3D graph view.
+
+![CodeScan GUI graph viewer](Home/img/codescan-gui.png)
+
+### Terminal UI
+
+The TUI supports project browsing, scanning, project management, keyword search, and graph search from the terminal.
+
+![CodeScan TUI home](Home/img/codescan-tui.png)
+
+### TUI Scan Flow
+
+Scanning can be launched from the terminal interface with method/comment extraction, git blame enrichment, and DB graph indexing.
+
+![CodeScan TUI scan](Home/img/codescan-tui-scan.png)
 
 ## Supported Languages
 
