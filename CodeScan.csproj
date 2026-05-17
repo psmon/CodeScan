@@ -76,11 +76,17 @@ File.WriteAllText(VersionFilePath, ResultVersion);
         </Task>
     </UsingTask>
 
-    <Target Name="AutoBumpVersion" BeforeTargets="BeforeBuild">
+    <!-- CI sets SkipAutoBumpVersion=true and supplies -p:Version=x.y.z explicitly,
+         so release builds keep the tag's version instead of bumping it. -->
+    <Target Name="AutoBumpVersion" BeforeTargets="BeforeBuild" Condition="'$(SkipAutoBumpVersion)' != 'true'">
         <BumpVersion VersionFilePath="$(MSBuildProjectDirectory)\version.txt">
             <Output TaskParameter="ResultVersion" PropertyName="Version" />
         </BumpVersion>
         <Message Importance="high" Text="=== CodeScan Build Version: $(Version) ===" />
+    </Target>
+
+    <Target Name="LogPinnedVersion" BeforeTargets="BeforeBuild" Condition="'$(SkipAutoBumpVersion)' == 'true'">
+        <Message Importance="high" Text="=== CodeScan Pinned Build Version: $(Version) (auto-bump skipped) ===" />
     </Target>
 
 </Project>

@@ -91,6 +91,8 @@ jobs:
       # AOT 마이그레이션은 v2 후보 (Terminal.Gui/SQLite 호환 검증 후).
       - name: Publish (self-contained, single-file)
         shell: bash
+        env:
+          VERSION: ${{ needs.resolve-version.outputs.version }}
         run: |
           rm -rf publish
           dotnet publish CodeScan.csproj \
@@ -102,7 +104,9 @@ jobs:
             -p:PublishAot=false \
             -p:PublishSingleFile=true \
             -p:TrimMode= \
-            -p:IlcOptimizationPreference=
+            -p:IlcOptimizationPreference= \
+            -p:SkipAutoBumpVersion=true \
+            -p:Version=$VERSION
 
       - name: Stage payload
         shell: bash
