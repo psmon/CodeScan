@@ -381,6 +381,16 @@ public static class GuiCommand
       </select>
       <label for="depth">Graph Depth</label>
       <select id="depth"><option>0</option><option selected>1</option><option>2</option><option>3</option><option>4</option></select>
+      <label for="querySample">Graph Query Samples</label>
+      <select id="querySample">
+        <option value="">Choose a MATCH query sample...</option>
+        <option value="MATCH (f:file)-[r:imports]->(m:module) WHERE m.label CONTAINS 'System' LIMIT 40">Files importing System modules</option>
+        <option value="MATCH (c:class)-[r:uses_type]->(t:type) WHERE t.label CONTAINS 'Actor' LIMIT 40">Classes using Actor-related types</option>
+        <option value="MATCH (c:class)-[r:creates]->(t:type) LIMIT 40">Classes creating object types</option>
+        <option value="MATCH (c:class)-[r:inherits_or_implements]->(t:type) LIMIT 40">Inheritance and interface links</option>
+        <option value="MATCH (a:author)-[r:authored]->(m:method) LIMIT 40">Authors and authored methods</option>
+        <option value="MATCH (f:file)-[r:has_comment]->(cm:comment) LIMIT 40">Files with comment nodes</option>
+      </select>
       <div class="actions"><button class="primary" id="graph">Graph Search</button><button id="graphQuery">Query</button><button id="keyword">Keyword</button></div>
       <div class="check"><input type="checkbox" id="labels" checked /> <span>Show node labels</span></div>
       <div class="check"><input type="checkbox" id="edgeLabels" checked /> <span>Show edge labels</span></div>
@@ -424,6 +434,7 @@ public static class GuiCommand
     function params(){ const q=encodeURIComponent($("query").value.trim()); const p=$("project").value; return `q=${q}${p?`&project=${p}`:""}`; }
     $("graph").onclick = async () => runGraphSearch();
     $("graphQuery").onclick = async () => runGraphQuery();
+    $("querySample").onchange = () => { const v=$("querySample").value; if(!v) return; $("query").value=v; $("depth").value="1"; $("query").focus(); };
     $("keyword").onclick = async () => { const t=$("type").value; const data=await api(`/api/search?limit=80${t?`&type=${t}`:""}&${params()}`); renderKeywordResults(data.results); };
     $("clear").onclick = () => { $("query").value=""; setGraph({nodes:[],edges:[]}); renderDetail(null); };
     $("query").addEventListener("keydown", e => { if(e.key==="Enter") ($("query").value.trim().toLowerCase().startsWith("match ") ? $("graphQuery") : $("graph")).click(); });
