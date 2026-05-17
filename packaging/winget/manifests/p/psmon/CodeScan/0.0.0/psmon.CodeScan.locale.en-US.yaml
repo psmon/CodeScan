@@ -1,0 +1,30 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+
+PackageIdentifier: psmon.CodeScan
+PackageVersion: 0.0.0
+PackageLocale: en-US
+Publisher: psmon
+PublisherUrl: https://github.com/psmon
+PublisherSupportUrl: https://github.com/psmon/CodeScan/issues
+PackageName: CodeScan
+PackageUrl: https://github.com/psmon/CodeScan
+License: MIT
+LicenseUrl: https://github.com/psmon/CodeScan/blob/main/LICENSE
+ShortDescription: CLI/TUI/GUI source-code scanner with FTS5 search and git blame.
+Description: |
+  CodeScan is a .NET 10 single-binary scanner that indexes source files at the
+  class:method level, integrates git blame, stores results in SQLite with FTS5
+  full-text search, and ships a CLI, TUI, and HTTP+browser GUI in one binary.
+  User data lives under ~/.codescan/ and is preserved across upgrades.
+Moniker: codescan
+Tags:
+  - code-search
+  - source-analyzer
+  - cli
+  - tui
+  - aot
+  - sqlite
+  - fts5
+  - git-blame
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

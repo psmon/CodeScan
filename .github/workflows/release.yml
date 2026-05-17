@@ -1,0 +1,279 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (without v prefix, e.g. 0.4.0). If empty, uses version.txt.'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+env:
+  DOTNET_VERSION: '10.0.x'
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  resolve-version:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            VERSION="${TAG#v}"
+          elif [[ -n "${{ github.event.inputs.version }}" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+            TAG="v${VERSION}"
+          else
+            VERSION="$(tr -d '[:space:]' < version.txt)"
+            TAG="v${VERSION}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: ${VERSION} (tag: ${TAG})"
+
+  build:
+    name: Build ${{ matrix.rid }}
+    needs: resolve-version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+            archive: zip
+            exe: codescan.exe
+          - os: ubuntu-22.04
+            rid: linux-x64
+            archive: tar.gz
+            exe: codescan
+          - os: ubuntu-22.04
+            rid: linux-arm64
+            archive: tar.gz
+            exe: codescan
+          - os: macos-13
+            rid: osx-x64
+            archive: tar.gz
+            exe: codescan
+          - os: macos-14
+            rid: osx-arm64
+            archive: tar.gz
+            exe: codescan
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Pin version.txt to release version
+        shell: bash
+        run: echo -n "${{ needs.resolve-version.outputs.version }}" > version.txt
+
+      - name: Restore
+        run: dotnet restore CodeScan.csproj -r ${{ matrix.rid }}
+
+      # v1: PublishAot=false + self-contained single-file (deploy-* 스크립트와 동일).
+      # AOT 마이그레이션은 v2 후보 (Terminal.Gui/SQLite 호환 검증 후).
+      - name: Publish (self-contained, single-file)
+        shell: bash
+        run: |
+          rm -rf publish
+          dotnet publish CodeScan.csproj \
+            -c Release \
+            -r ${{ matrix.rid }} \
+            -o publish \
+            --no-restore \
+            --self-contained \
+            -p:PublishAot=false \
+            -p:PublishSingleFile=true \
+            -p:TrimMode= \
+            -p:IlcOptimizationPreference=
+
+      - name: Stage payload
+        shell: bash
+        run: |
+          STAGE="staging/codescan"
+          mkdir -p "$STAGE"
+          cp "publish/${{ matrix.exe }}" "$STAGE/"
+          [[ "${{ matrix.exe }}" == "codescan" ]] && chmod +x "$STAGE/codescan" || true
+          cp version.txt "$STAGE/VERSION"
+          [[ -f README.md ]] && cp README.md "$STAGE/" || true
+          [[ -f LICENSE ]] && cp LICENSE "$STAGE/" || true
+          [[ -f LICENSE.md ]] && cp LICENSE.md "$STAGE/LICENSE.md" || true
+
+      - name: Package (zip)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          $name = "codescan-${{ matrix.rid }}.zip"
+          Compress-Archive -Path staging/codescan -DestinationPath $name -Force
+          Write-Host "Created $name"
+
+      - name: Package (tar.gz)
+        if: matrix.archive == 'tar.gz'
+        shell: bash
+        run: |
+          NAME="codescan-${{ matrix.rid }}.tar.gz"
+          tar -czf "$NAME" -C staging codescan
+          echo "Created $NAME"
+
+      - name: Compute SHA256
+        shell: bash
+        run: |
+          NAME="codescan-${{ matrix.rid }}.${{ matrix.archive }}"
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$NAME" > "${NAME}.sha256"
+          else
+            shasum -a 256 "$NAME" > "${NAME}.sha256"
+          fi
+          cat "${NAME}.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: codescan-${{ matrix.rid }}
+          path: |
+            codescan-${{ matrix.rid }}.${{ matrix.archive }}
+            codescan-${{ matrix.rid }}.${{ matrix.archive }}.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  sbom:
+    name: Generate SBOM
+    needs: resolve-version
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      - name: Install CycloneDX tool
+        run: dotnet tool install --global CycloneDX
+      - name: Generate SBOM
+        run: |
+          dotnet CycloneDX CodeScan.csproj \
+            --output . \
+            --filename sbom.cdx.json \
+            --json
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.cdx.json
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish GitHub Release
+    needs: [resolve-version, build, sbom]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Aggregate checksums
+        shell: bash
+        working-directory: dist
+        run: |
+          ls -la
+          : > checksums.txt
+          for f in codescan-*.zip codescan-*.tar.gz; do
+            [[ -e "$f" ]] || continue
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum "$f" >> checksums.txt
+            else
+              shasum -a 256 "$f" >> checksums.txt
+            fi
+          done
+          # Drop the per-asset .sha256 files now that aggregate exists
+          rm -f codescan-*.sha256
+          echo "----- checksums.txt -----"
+          cat checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.resolve-version.outputs.tag }}
+          name: ${{ needs.resolve-version.outputs.tag }}
+          draft: false
+          prerelease: ${{ contains(needs.resolve-version.outputs.version, '-') }}
+          generate_release_notes: true
+          files: |
+            dist/codescan-*.zip
+            dist/codescan-*.tar.gz
+            dist/checksums.txt
+            dist/sbom.cdx.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ---------------------------------------------------------------
+  # Channel publishers — v1: manual (workflow_dispatch only).
+  # Enable after Release is verified and credentials are configured.
+  # ---------------------------------------------------------------
+
+  publish-winget:
+    name: Submit winget manifest (manual)
+    if: false
+    needs: [resolve-version, release]
+    runs-on: windows-latest
+    steps:
+      - name: Submit to microsoft/winget-pkgs
+        uses: vedantmgoyal9/winget-releaser@main
+        with:
+          identifier: psmon.CodeScan
+          version: ${{ needs.resolve-version.outputs.version }}
+          installers-regex: 'codescan-win-x64\.zip$'
+          token: ${{ secrets.WINGET_TOKEN }}
+
+  publish-homebrew:
+    name: Update Homebrew tap formula (manual)
+    if: false
+    needs: [resolve-version, release]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Update formula in psmon/homebrew-codescan
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ needs.resolve-version.outputs.version }}
+        run: |
+          echo "TODO: clone psmon/homebrew-codescan, run packaging/homebrew/update-formula.sh, push PR"
+          echo "See packaging/homebrew/README.md for the documented procedure."
+
+  publish-npm:
+    name: Publish codescan-cli to npm (manual)
+    if: false
+    needs: [resolve-version, release]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+      - name: Sync package version
+        working-directory: packaging/npm/codescan-cli
+        run: npm version --no-git-tag-version "${{ needs.resolve-version.outputs.version }}"
+      - name: Publish
+        working-directory: packaging/npm/codescan-cli
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

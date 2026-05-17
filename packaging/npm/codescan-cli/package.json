@@ -1,0 +1,48 @@
+{
+  "name": "codescan-cli",
+  "version": "0.0.0",
+  "description": "CLI/TUI/GUI source-code scanner with FTS5 search and git blame. (npm wrapper around the prebuilt CodeScan binary.)",
+  "keywords": [
+    "code-search",
+    "source-analyzer",
+    "cli",
+    "tui",
+    "fts5",
+    "git-blame"
+  ],
+  "homepage": "https://github.com/psmon/CodeScan",
+  "bugs": {
+    "url": "https://github.com/psmon/CodeScan/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/psmon/CodeScan.git",
+    "directory": "packaging/npm/codescan-cli"
+  },
+  "license": "MIT",
+  "author": "psmon",
+  "bin": {
+    "codescan": "bin/codescan.js"
+  },
+  "files": [
+    "bin/",
+    "scripts/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "postinstall": "node scripts/install.js",
+    "preuninstall": "node scripts/uninstall.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "linux",
+    "darwin"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ]
+}

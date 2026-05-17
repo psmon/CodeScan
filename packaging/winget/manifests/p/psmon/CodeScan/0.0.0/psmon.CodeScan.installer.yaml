@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+#
+# Template manifest — CI substitutes {VERSION} and {SHA256} per release before
+# submission to microsoft/winget-pkgs. Do not bump the leading 0.0.0 path
+# manually; the release workflow copies the file into the version-specific
+# manifest tree.
+
+PackageIdentifier: psmon.CodeScan
+PackageVersion: 0.0.0
+InstallerType: portable
+Commands:
+  - codescan
+ReleaseDate: 1970-01-01
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/psmon/CodeScan/releases/download/v{VERSION}/codescan-win-x64.zip
+    InstallerSha256: {SHA256}
+    NestedInstallerType: portable
+    NestedInstallerFiles:
+      - RelativeFilePath: codescan\codescan.exe
+        PortableCommandAlias: codescan
+ManifestType: installer
+ManifestVersion: 1.6.0

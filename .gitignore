@@ -3,6 +3,11 @@
 [Oo]bj/
 artifacts/
 publish/
+# Allow npm package bin dir
+!packaging/npm/codescan-cli/bin/
+
+# Git Bash crash dumps
+*.stackdump
 
 # User-specific files
 *.rsuser

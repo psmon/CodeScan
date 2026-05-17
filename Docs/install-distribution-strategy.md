@@ -8,6 +8,21 @@
 
 CodeScan의 지식, 아키텍처, 간편 설치, 배포 운영 같은 기술 주제 문서는 `Docs/` 하위에 보관한다.
 
+## 구현 산출물 위치
+
+본 전략의 1차 구현은 다음 경로에 스캐폴드되어 있다. 자세한 운영 절차는 각 README 참고.
+
+| 구성 요소 | 경로 |
+|----------|------|
+| CI 릴리즈 워크플로우 | `.github/workflows/release.yml` |
+| Windows 직접 인스톨러 | `Script/install-win.ps1` |
+| Unix 직접 인스톨러 | `Script/install.sh` |
+| 패키지 매니페스트 통합 README | `packaging/README.md` |
+| winget 매니페스트 | `packaging/winget/` |
+| Homebrew tap formula | `packaging/homebrew/` |
+| npm 래퍼 패키지 | `packaging/npm/codescan-cli/` |
+| 기존 로컬 배포 스크립트 (변경 없음) | `Script/deploy-win.ps1`, `Script/deploy-linux.sh` |
+
 ## 목표
 
 - 사용자가 플랫폼별 익숙한 패키지 매니저로 CodeScan을 설치할 수 있게 한다.
