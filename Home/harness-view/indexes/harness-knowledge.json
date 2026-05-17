@@ -2,12 +2,30 @@
   "base": "harness/knowledge",
   "items": [
     {
+      "id": "harness/knowledge/actor-model-cross-toolkit.md",
+      "file": "harness/knowledge/actor-model-cross-toolkit.md",
+      "name": "actor-model-cross-toolkit.md",
+      "title": "actor-model-cross-toolkit",
+      "heading": "Actor Model — Cross-Toolkit Knowledge",
+      "size": 7263,
+      "modified": "2026-05-17"
+    },
+    {
       "id": "harness/knowledge/aot-rules.md",
       "file": "harness/knowledge/aot-rules.md",
       "name": "aot-rules.md",
       "title": "aot-rules",
       "heading": "AOT 규칙 (CodeScan)",
       "size": 2149,
+      "modified": "2026-05-17"
+    },
+    {
+      "id": "harness/knowledge/language-analyzer-patterns.md",
+      "file": "harness/knowledge/language-analyzer-patterns.md",
+      "name": "language-analyzer-patterns.md",
+      "title": "language-analyzer-patterns",
+      "heading": "Language Analyzer Patterns — Regex Catalog & Limits",
+      "size": 6215,
       "modified": "2026-05-17"
     },
     {
@@ -18,9 +36,25 @@
       "heading": "정규식 패턴 가이드 (CodeScan)",
       "size": 2695,
       "modified": "2026-05-17"
+    },
+    {
+      "id": "harness/knowledge/semantic-analyzer-docker.md",
+      "file": "harness/knowledge/semantic-analyzer-docker.md",
+      "name": "semantic-analyzer-docker.md",
+      "title": "semantic-analyzer-docker",
+      "heading": "Semantic Analyzer Docker Plan",
+      "size": 10110,
+      "modified": "2026-05-17"
     }
   ],
   "tree": [
+    {
+      "type": "file",
+      "name": "actor-model-cross-toolkit.md",
+      "path": "actor-model-cross-toolkit.md",
+      "size": 7263,
+      "modified": "2026-05-17"
+    },
     {
       "type": "file",
       "name": "aot-rules.md",
@@ -30,9 +64,23 @@
     },
     {
       "type": "file",
+      "name": "language-analyzer-patterns.md",
+      "path": "language-analyzer-patterns.md",
+      "size": 6215,
+      "modified": "2026-05-17"
+    },
+    {
+      "type": "file",
       "name": "regex-patterns.md",
       "path": "regex-patterns.md",
       "size": 2695,
+      "modified": "2026-05-17"
+    },
+    {
+      "type": "file",
+      "name": "semantic-analyzer-docker.md",
+      "path": "semantic-analyzer-docker.md",
+      "size": 10110,
       "modified": "2026-05-17"
     }
   ]

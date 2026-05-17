@@ -3,6 +3,16 @@
   "sort": "semver-desc",
   "items": [
     {
+      "file": "v1.2.0.md",
+      "title": "v1.2.0",
+      "heading": "Harness v1.2.0 — 다국어 + 액터 전문가 합류",
+      "path": "v1.2.0.md",
+      "size": 3518,
+      "modified": "2026-05-17",
+      "author": "psmon",
+      "committed": "2026-05-18"
+    },
+    {
       "file": "v1.1.0.md",
       "title": "v1.1.0",
       "heading": "초기 전문가 3명 투입",
@@ -26,29 +36,29 @@
   "contributors": [
     {
       "name": "psmon",
-      "commits": 5,
+      "commits": 8,
       "percent": 100
     }
   ],
   "contributorsAll": [
     {
       "name": "psmon",
-      "commits": 5,
+      "commits": 8,
       "percent": 100
     }
   ],
   "contributorsRecent": [
     {
       "name": "psmon",
-      "commits": 5,
+      "commits": 8,
       "percent": 100
     }
   ],
   "contributorsWindowDays": 14,
   "commitStats": {
-    "totalAllTime": 5,
-    "last7d": 5,
-    "last30d": 5
+    "totalAllTime": 8,
+    "last7d": 8,
+    "last30d": 8
   },
   "topChangedFiles": [
     {
@@ -56,19 +66,19 @@
       "commits": 4
     },
     {
-      "path": "harness/logs/tamer/2026-05-17-14-00-implement-install-distribution.md",
+      "path": "harness/harness.config.json",
+      "commits": 2
+    },
+    {
+      "path": "harness/agents/actor-toolkit-scout.md",
       "commits": 1
     },
     {
-      "path": "harness/agents/aot-compatibility-scout.md",
+      "path": "harness/agents/language-analyzer-keeper.md",
       "commits": 1
     },
     {
-      "path": "harness/agents/regex-safety-guard.md",
-      "commits": 1
-    },
-    {
-      "path": "harness/agents/tamer.md",
+      "path": "harness/agents/semantic-bridge-architect.md",
       "commits": 1
     }
   ]

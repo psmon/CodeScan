@@ -2,6 +2,15 @@
   "base": "harness/agents",
   "items": [
     {
+      "id": "harness/agents/actor-toolkit-scout.md",
+      "file": "harness/agents/actor-toolkit-scout.md",
+      "name": "actor-toolkit-scout.md",
+      "title": "actor-toolkit-scout",
+      "heading": "액터 추적자 (Actor Toolkit Scout)",
+      "size": 3963,
+      "modified": "2026-05-17"
+    },
+    {
       "id": "harness/agents/aot-compatibility-scout.md",
       "file": "harness/agents/aot-compatibility-scout.md",
       "name": "aot-compatibility-scout.md",
@@ -11,12 +20,30 @@
       "modified": "2026-05-17"
     },
     {
+      "id": "harness/agents/language-analyzer-keeper.md",
+      "file": "harness/agents/language-analyzer-keeper.md",
+      "name": "language-analyzer-keeper.md",
+      "title": "language-analyzer-keeper",
+      "heading": "다국어 정원사 (Language Analyzer Keeper)",
+      "size": 4302,
+      "modified": "2026-05-17"
+    },
+    {
       "id": "harness/agents/regex-safety-guard.md",
       "file": "harness/agents/regex-safety-guard.md",
       "name": "regex-safety-guard.md",
       "title": "regex-safety-guard",
       "heading": "정규식 수문장 (Regex Safety Guard)",
       "size": 2523,
+      "modified": "2026-05-17"
+    },
+    {
+      "id": "harness/agents/semantic-bridge-architect.md",
+      "file": "harness/agents/semantic-bridge-architect.md",
+      "name": "semantic-bridge-architect.md",
+      "title": "semantic-bridge-architect",
+      "heading": "컴파일러 가교 설계자 (Semantic Bridge Architect)",
+      "size": 4218,
       "modified": "2026-05-17"
     },
     {

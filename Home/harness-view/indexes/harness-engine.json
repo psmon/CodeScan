@@ -2,6 +2,13 @@
   "base": "harness/engine",
   "items": [
     {
+      "file": "actor-graph-extension.md",
+      "title": "actor-graph-extension",
+      "path": "actor-graph-extension.md",
+      "size": 3457,
+      "modified": "2026-05-17"
+    },
+    {
       "file": "test-audit.md",
       "title": "test-audit",
       "path": "test-audit.md",

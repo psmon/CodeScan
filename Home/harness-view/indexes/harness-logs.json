@@ -1,12 +1,54 @@
 {
   "base": "harness/logs",
   "categories": [
-    "tamer"
+    "tamer",
+    "test-sentinel"
   ],
   "counts": {
-    "tamer": 2
+    "tamer": 3,
+    "test-sentinel": 4
   },
   "items": [
+    {
+      "category": "tamer",
+      "file": "harness/logs/tamer/2026-05-18-01-16-add-language-and-actor-experts.md",
+      "date": "2026-05-18",
+      "time": "01:16",
+      "title": "add language and actor experts",
+      "size": 3482
+    },
+    {
+      "category": "test-sentinel",
+      "file": "harness/logs/test-sentinel/2026-05-18-01-04-actor-hierarchy-cross-toolkit.md",
+      "date": "2026-05-18",
+      "time": "01:04",
+      "title": "actor hierarchy cross toolkit",
+      "size": 9492
+    },
+    {
+      "category": "test-sentinel",
+      "file": "harness/logs/test-sentinel/2026-05-18-00-53-akka-actor-hierarchy-fixture.md",
+      "date": "2026-05-18",
+      "time": "00:53",
+      "title": "akka actor hierarchy fixture",
+      "size": 8408
+    },
+    {
+      "category": "test-sentinel",
+      "file": "harness/logs/test-sentinel/2026-05-18-00-42-language-analyzer-refactor.md",
+      "date": "2026-05-18",
+      "time": "00:42",
+      "title": "language analyzer refactor",
+      "size": 6875
+    },
+    {
+      "category": "test-sentinel",
+      "file": "harness/logs/test-sentinel/2026-05-18-00-16-multilang-sample-e2e.md",
+      "date": "2026-05-18",
+      "time": "00:16",
+      "title": "multilang sample e2e",
+      "size": 8246
+    },
     {
       "category": "tamer",
       "file": "harness/logs/tamer/2026-05-17-14-00-implement-install-distribution.md",
