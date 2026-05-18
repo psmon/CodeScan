@@ -62,12 +62,19 @@ class Program
             "project-delete" => RunProjectDelete(commandArgs),
             "tui" => RunTui(),
             "semantic" => RunSemantic(commandArgs),
+            "graph-edit" => RunGraphEdit(commandArgs),
             "help" => RunHelp(commandArgs),
             _ => UnknownCommand(command)
         };
     }
 
     static int RunSemantic(string[] args) => new SemanticCommand().Execute(args);
+
+    static int RunGraphEdit(string[] args)
+    {
+        using var db = OpenDb();
+        return new GraphEditCommand(db).Execute(args);
+    }
 
     static int RunScan(string[] args, GlobalOptions global)
     {
@@ -573,6 +580,7 @@ class Program
           project-delete <id>          Delete a project from DB
           tui                          Interactive TUI mode
           semantic <sub>               Compiler-backed analysis via docker (Phase 1 PoC)
+          graph-edit <sub>             Manually curate graph nodes/edges (LLM-friendly)
           help [command]               Show help
 
         Global Options:

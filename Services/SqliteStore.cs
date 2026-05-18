@@ -126,6 +126,28 @@ public sealed class SqliteStore : IResultStore, IDisposable
         }
         catch { /* column already exists */ }
 
+        // Migration: curated graph edges (v0.7.0). weight grows on `graph-edit
+        // strengthen`; curated=1 marks an edge a human/LLM added so future
+        // rescans can choose to keep it.
+        try
+        {
+            cmd.CommandText = "ALTER TABLE graph_edges ADD COLUMN weight INTEGER NOT NULL DEFAULT 1";
+            cmd.ExecuteNonQuery();
+        }
+        catch { /* column already exists */ }
+        try
+        {
+            cmd.CommandText = "ALTER TABLE graph_edges ADD COLUMN curated INTEGER NOT NULL DEFAULT 0";
+            cmd.ExecuteNonQuery();
+        }
+        catch { /* column already exists */ }
+        try
+        {
+            cmd.CommandText = "ALTER TABLE graph_nodes ADD COLUMN curated INTEGER NOT NULL DEFAULT 0";
+            cmd.ExecuteNonQuery();
+        }
+        catch { /* column already exists */ }
+
         // FTS5 for full-text search (trigram tokenizer for Korean substring matching)
         try
         {
@@ -362,19 +384,28 @@ public sealed class SqliteStore : IResultStore, IDisposable
     // ========================
     // Project detail queries (latest scan)
     // ========================
-    private long GetLatestScanId(long projectId)
+
+    /// <summary>
+    /// Most-recently-completed scan id for a project, or null if the project
+    /// has never been scanned. Public so curation tooling (graph-edit) can
+    /// resolve "the latest scan of this project" without re-implementing the
+    /// query.
+    /// </summary>
+    public long? GetLatestScanId(long projectId)
     {
         using var cmd = _conn.CreateCommand();
         cmd.CommandText = "SELECT MAX(id) FROM scans WHERE project_id = @pid";
         cmd.Parameters.AddWithValue("@pid", projectId);
         var result = cmd.ExecuteScalar();
-        return result is long v ? v : 0;
+        return result is long v ? v : null;
     }
+
+    private long GetLatestScanIdOrZero(long projectId) => GetLatestScanId(projectId) ?? 0;
 
     public List<ProjectFileInfo> GetProjectFiles(long projectId)
     {
         var list = new List<ProjectFileInfo>();
-        var scanId = GetLatestScanId(projectId);
+        var scanId = GetLatestScanIdOrZero(projectId);
         if (scanId == 0) return list;
 
         using var cmd = _conn.CreateCommand();
@@ -404,7 +435,7 @@ public sealed class SqliteStore : IResultStore, IDisposable
     public List<ProjectMethodInfo> GetProjectMethods(long projectId)
     {
         var list = new List<ProjectMethodInfo>();
-        var scanId = GetLatestScanId(projectId);
+        var scanId = GetLatestScanIdOrZero(projectId);
         if (scanId == 0) return list;
 
         using var cmd = _conn.CreateCommand();
@@ -438,7 +469,7 @@ public sealed class SqliteStore : IResultStore, IDisposable
     public List<ProjectCommentInfo> GetProjectComments(long projectId)
     {
         var list = new List<ProjectCommentInfo>();
-        var scanId = GetLatestScanId(projectId);
+        var scanId = GetLatestScanIdOrZero(projectId);
         if (scanId == 0) return list;
 
         using var cmd = _conn.CreateCommand();
@@ -492,7 +523,7 @@ public sealed class SqliteStore : IResultStore, IDisposable
     public List<string> GetProjectExtensions(long projectId)
     {
         var list = new List<string>();
-        var scanId = GetLatestScanId(projectId);
+        var scanId = GetLatestScanIdOrZero(projectId);
         if (scanId == 0) return list;
 
         using var cmd = _conn.CreateCommand();
@@ -511,7 +542,7 @@ public sealed class SqliteStore : IResultStore, IDisposable
     public List<string> GetProjectAuthors(long projectId)
     {
         var list = new List<string>();
-        var scanId = GetLatestScanId(projectId);
+        var scanId = GetLatestScanIdOrZero(projectId);
         if (scanId == 0) return list;
 
         using var cmd = _conn.CreateCommand();
@@ -1309,6 +1340,190 @@ public sealed class SqliteStore : IResultStore, IDisposable
         using var cmd = _conn.CreateCommand();
         cmd.CommandText = "SELECT last_insert_rowid()";
         return (long)cmd.ExecuteScalar()!;
+    }
+
+    // ========================
+    // Graph curation API (v0.7.0+) — manual node/edge management.
+    // ========================
+
+    /// <summary>Project id of the most-recently-scanned project, or null if none exist.</summary>
+    public long? GetLatestProjectId()
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = "SELECT id FROM projects WHERE last_scanned_at IS NOT NULL ORDER BY last_scanned_at DESC LIMIT 1";
+        var result = cmd.ExecuteScalar();
+        return result is long v ? v : null;
+    }
+
+    public long UpsertCuratedNode(long scanId, string kind, string label, string path, string detail)
+    {
+        // Stable key for curated nodes is "curated:<kind>:<label>" so the same
+        // logical node is re-found across operations.
+        var stableKey = $"curated:{kind}:{label}";
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO graph_nodes(scan_id, kind, stable_key, label, path, detail, curated)
+            VALUES(@sid, @kind, @key, @label, @path, @detail, 1)
+            ON CONFLICT(scan_id, stable_key) DO UPDATE SET
+                kind = excluded.kind,
+                label = excluded.label,
+                path = excluded.path,
+                detail = excluded.detail,
+                curated = 1
+            """;
+        cmd.Parameters.AddWithValue("@sid", scanId);
+        cmd.Parameters.AddWithValue("@kind", kind);
+        cmd.Parameters.AddWithValue("@key", stableKey);
+        cmd.Parameters.AddWithValue("@label", label);
+        cmd.Parameters.AddWithValue("@path", path);
+        cmd.Parameters.AddWithValue("@detail", detail);
+        cmd.ExecuteNonQuery();
+
+        cmd.CommandText = "SELECT id FROM graph_nodes WHERE scan_id = @sid AND stable_key = @key";
+        return (long)cmd.ExecuteScalar()!;
+    }
+
+    /// <summary>
+    /// Resolve a label to existing node ids within a scan. Returns all matches —
+    /// the caller decides how to pick (graph-edit prints them so the user can
+    /// disambiguate by id).
+    /// </summary>
+    public List<long> FindNodeIdsByLabel(long scanId, string label)
+    {
+        var list = new List<long>();
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = "SELECT id FROM graph_nodes WHERE scan_id = @sid AND label = @label ORDER BY id";
+        cmd.Parameters.AddWithValue("@sid", scanId);
+        cmd.Parameters.AddWithValue("@label", label);
+        using var r = cmd.ExecuteReader();
+        while (r.Read()) list.Add(r.GetInt64(0));
+        return list;
+    }
+
+    public GraphNode? GetNode(long nodeId)
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = "SELECT id, scan_id, kind, label, path, detail FROM graph_nodes WHERE id = @id";
+        cmd.Parameters.AddWithValue("@id", nodeId);
+        using var r = cmd.ExecuteReader();
+        if (!r.Read()) return null;
+        return new GraphNode
+        {
+            Id = r.GetInt64(0),
+            ScanId = r.GetInt64(1),
+            Kind = r.GetString(2),
+            Label = r.GetString(3),
+            Path = r.IsDBNull(4) ? "" : r.GetString(4),
+            Detail = r.IsDBNull(5) ? "" : r.GetString(5),
+        };
+    }
+
+    public long UpsertCuratedEdge(long scanId, long fromNodeId, long toNodeId, string kind, string label)
+    {
+        if (fromNodeId <= 0 || toNodeId <= 0 || fromNodeId == toNodeId)
+            throw new ArgumentException("from/to node ids must be positive and distinct.");
+
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO graph_edges(scan_id, from_node_id, to_node_id, kind, label, weight, curated)
+            VALUES(@sid, @from, @to, @kind, @label, 1, 1)
+            ON CONFLICT(scan_id, from_node_id, to_node_id, kind) DO UPDATE SET
+                label = excluded.label,
+                curated = 1
+            """;
+        cmd.Parameters.AddWithValue("@sid", scanId);
+        cmd.Parameters.AddWithValue("@from", fromNodeId);
+        cmd.Parameters.AddWithValue("@to", toNodeId);
+        cmd.Parameters.AddWithValue("@kind", kind);
+        cmd.Parameters.AddWithValue("@label", label);
+        cmd.ExecuteNonQuery();
+
+        cmd.CommandText = """
+            SELECT id FROM graph_edges
+            WHERE scan_id = @sid AND from_node_id = @from AND to_node_id = @to AND kind = @kind
+            """;
+        return (long)cmd.ExecuteScalar()!;
+    }
+
+    /// <summary>
+    /// Reinforce an existing edge — ++weight, set curated=1. Returns the new
+    /// weight, or null if the edge does not exist (caller decides whether to
+    /// fall back to add-edge).
+    /// </summary>
+    public int? StrengthenEdge(long scanId, long fromNodeId, long toNodeId, string kind)
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE graph_edges
+            SET weight = weight + 1, curated = 1
+            WHERE scan_id = @sid AND from_node_id = @from AND to_node_id = @to AND kind = @kind
+            """;
+        cmd.Parameters.AddWithValue("@sid", scanId);
+        cmd.Parameters.AddWithValue("@from", fromNodeId);
+        cmd.Parameters.AddWithValue("@to", toNodeId);
+        cmd.Parameters.AddWithValue("@kind", kind);
+        var affected = cmd.ExecuteNonQuery();
+        if (affected == 0) return null;
+
+        cmd.CommandText = """
+            SELECT weight FROM graph_edges
+            WHERE scan_id = @sid AND from_node_id = @from AND to_node_id = @to AND kind = @kind
+            """;
+        return Convert.ToInt32(cmd.ExecuteScalar()!);
+    }
+
+    public bool UpdateNodeFields(long nodeId, string? kind, string? label, string? path, string? detail)
+    {
+        var sets = new List<string>();
+        if (kind is not null) sets.Add("kind = @kind");
+        if (label is not null) sets.Add("label = @label");
+        if (path is not null) sets.Add("path = @path");
+        if (detail is not null) sets.Add("detail = @detail");
+        if (sets.Count == 0) return false;
+
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = $"UPDATE graph_nodes SET {string.Join(", ", sets)}, curated = 1 WHERE id = @id";
+        cmd.Parameters.AddWithValue("@id", nodeId);
+        if (kind is not null) cmd.Parameters.AddWithValue("@kind", kind);
+        if (label is not null) cmd.Parameters.AddWithValue("@label", label);
+        if (path is not null) cmd.Parameters.AddWithValue("@path", path);
+        if (detail is not null) cmd.Parameters.AddWithValue("@detail", detail);
+        return cmd.ExecuteNonQuery() > 0;
+    }
+
+    public bool UpdateEdgeFields(long edgeId, string? kind, string? label)
+    {
+        var sets = new List<string>();
+        if (kind is not null) sets.Add("kind = @kind");
+        if (label is not null) sets.Add("label = @label");
+        if (sets.Count == 0) return false;
+
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = $"UPDATE graph_edges SET {string.Join(", ", sets)}, curated = 1 WHERE id = @id";
+        cmd.Parameters.AddWithValue("@id", edgeId);
+        if (kind is not null) cmd.Parameters.AddWithValue("@kind", kind);
+        if (label is not null) cmd.Parameters.AddWithValue("@label", label);
+        return cmd.ExecuteNonQuery() > 0;
+    }
+
+    public bool DeleteEdge(long edgeId)
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM graph_edges WHERE id = @id";
+        cmd.Parameters.AddWithValue("@id", edgeId);
+        return cmd.ExecuteNonQuery() > 0;
+    }
+
+    /// <summary>Delete a node and every edge touching it (cascading).</summary>
+    public bool DeleteNodeCascade(long nodeId)
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM graph_edges WHERE from_node_id = @id OR to_node_id = @id";
+        cmd.Parameters.AddWithValue("@id", nodeId);
+        cmd.ExecuteNonQuery();
+
+        cmd.CommandText = "DELETE FROM graph_nodes WHERE id = @id";
+        return cmd.ExecuteNonQuery() > 0;
     }
 
     public void Dispose()
