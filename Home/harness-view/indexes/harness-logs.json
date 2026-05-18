@@ -3,6 +3,7 @@
   "categories": [
     "actor-graph-extension",
     "actor-toolkit-scout",
+    "graph-curator",
     "semantic-bridge-architect",
     "tamer",
     "test-audit",
@@ -11,12 +12,21 @@
   "counts": {
     "actor-graph-extension": 1,
     "actor-toolkit-scout": 1,
+    "graph-curator": 1,
     "semantic-bridge-architect": 2,
     "tamer": 4,
     "test-audit": 1,
     "test-sentinel": 4
   },
   "items": [
+    {
+      "category": "graph-curator",
+      "file": "harness/logs/graph-curator/2026-05-19-08-00-graph-edit-cli-foundation.md",
+      "date": "2026-05-19",
+      "time": "08:00",
+      "title": "graph edit cli foundation",
+      "size": 6896
+    },
     {
       "category": "semantic-bridge-architect",
       "file": "harness/logs/semantic-bridge-architect/2026-05-18-15-30-phase2-foundation.md",

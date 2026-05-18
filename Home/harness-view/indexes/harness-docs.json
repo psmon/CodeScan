@@ -3,6 +3,16 @@
   "sort": "semver-desc",
   "items": [
     {
+      "file": "v1.5.0.md",
+      "title": "v1.5.0",
+      "heading": "graph-curator 합류 + `codescan graph-edit` CLI",
+      "path": "v1.5.0.md",
+      "size": 5696,
+      "modified": "2026-05-18",
+      "author": "psmon",
+      "committed": "2026-05-19"
+    },
+    {
       "file": "v1.4.0.md",
       "title": "v1.4.0",
       "heading": "잔여 개선건 P2+P3 일괄 진행",
@@ -56,38 +66,42 @@
   "contributors": [
     {
       "name": "psmon",
-      "commits": 13,
+      "commits": 15,
       "percent": 100
     }
   ],
   "contributorsAll": [
     {
       "name": "psmon",
-      "commits": 13,
+      "commits": 15,
       "percent": 100
     }
   ],
   "contributorsRecent": [
     {
       "name": "psmon",
-      "commits": 13,
+      "commits": 15,
       "percent": 100
     }
   ],
   "contributorsWindowDays": 14,
   "commitStats": {
-    "totalAllTime": 13,
-    "last7d": 13,
-    "last30d": 13
+    "totalAllTime": 15,
+    "last7d": 15,
+    "last30d": 15
   },
   "topChangedFiles": [
     {
       "path": "harness/harness.config.json",
-      "commits": 4
+      "commits": 5
     },
     {
       "path": "Docs/install-distribution-strategy.md",
       "commits": 4
+    },
+    {
+      "path": "Home/harness-view/data/pdsa-insight.json",
+      "commits": 3
     },
     {
       "path": "harness/knowledge/actor-model-cross-toolkit.md",
@@ -95,10 +109,6 @@
     },
     {
       "path": "harness/knowledge/semantic-analyzer-docker.md",
-      "commits": 2
-    },
-    {
-      "path": "Home/harness-view/js/utils/loader.js",
       "commits": 2
     }
   ]

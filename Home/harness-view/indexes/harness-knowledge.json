@@ -20,6 +20,15 @@
       "modified": "2026-05-17"
     },
     {
+      "id": "harness/knowledge/graph-curation-guide.md",
+      "file": "harness/knowledge/graph-curation-guide.md",
+      "name": "graph-curation-guide.md",
+      "title": "graph-curation-guide",
+      "heading": "Graph Curation Guide",
+      "size": 6238,
+      "modified": "2026-05-18"
+    },
+    {
       "id": "harness/knowledge/language-analyzer-patterns.md",
       "file": "harness/knowledge/language-analyzer-patterns.md",
       "name": "language-analyzer-patterns.md",
@@ -61,6 +70,13 @@
       "path": "aot-rules.md",
       "size": 2149,
       "modified": "2026-05-17"
+    },
+    {
+      "type": "file",
+      "name": "graph-curation-guide.md",
+      "path": "graph-curation-guide.md",
+      "size": 6238,
+      "modified": "2026-05-18"
     },
     {
       "type": "file",

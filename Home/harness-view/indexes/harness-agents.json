@@ -20,6 +20,15 @@
       "modified": "2026-05-17"
     },
     {
+      "id": "harness/agents/graph-curator.md",
+      "file": "harness/agents/graph-curator.md",
+      "name": "graph-curator.md",
+      "title": "graph-curator",
+      "heading": "정원 가꾸미 (Graph Curator)",
+      "size": 5688,
+      "modified": "2026-05-18"
+    },
+    {
       "id": "harness/agents/language-analyzer-keeper.md",
       "file": "harness/agents/language-analyzer-keeper.md",
       "name": "language-analyzer-keeper.md",
