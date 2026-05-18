@@ -3,6 +3,26 @@
   "sort": "semver-desc",
   "items": [
     {
+      "file": "v1.4.0.md",
+      "title": "v1.4.0",
+      "heading": "잔여 개선건 P2+P3 일괄 진행",
+      "path": "v1.4.0.md",
+      "size": 6801,
+      "modified": "2026-05-18",
+      "author": "psmon",
+      "committed": "2026-05-18"
+    },
+    {
+      "file": "v1.3.0.md",
+      "title": "v1.3.0",
+      "heading": "잔여 개선건 P0+P1 일괄 진행",
+      "path": "v1.3.0.md",
+      "size": 6093,
+      "modified": "2026-05-18",
+      "author": "psmon",
+      "committed": "2026-05-18"
+    },
+    {
       "file": "v1.2.0.md",
       "title": "v1.2.0",
       "heading": "Harness v1.2.0 — 다국어 + 액터 전문가 합류",
@@ -36,50 +56,50 @@
   "contributors": [
     {
       "name": "psmon",
-      "commits": 8,
+      "commits": 13,
       "percent": 100
     }
   ],
   "contributorsAll": [
     {
       "name": "psmon",
-      "commits": 8,
+      "commits": 13,
       "percent": 100
     }
   ],
   "contributorsRecent": [
     {
       "name": "psmon",
-      "commits": 8,
+      "commits": 13,
       "percent": 100
     }
   ],
   "contributorsWindowDays": 14,
   "commitStats": {
-    "totalAllTime": 8,
-    "last7d": 8,
-    "last30d": 8
+    "totalAllTime": 13,
+    "last7d": 13,
+    "last30d": 13
   },
   "topChangedFiles": [
+    {
+      "path": "harness/harness.config.json",
+      "commits": 4
+    },
     {
       "path": "Docs/install-distribution-strategy.md",
       "commits": 4
     },
     {
-      "path": "harness/harness.config.json",
+      "path": "harness/knowledge/actor-model-cross-toolkit.md",
       "commits": 2
     },
     {
-      "path": "harness/agents/actor-toolkit-scout.md",
-      "commits": 1
+      "path": "harness/knowledge/semantic-analyzer-docker.md",
+      "commits": 2
     },
     {
-      "path": "harness/agents/language-analyzer-keeper.md",
-      "commits": 1
-    },
-    {
-      "path": "harness/agents/semantic-bridge-architect.md",
-      "commits": 1
+      "path": "Home/harness-view/js/utils/loader.js",
+      "commits": 2
     }
   ]
 }

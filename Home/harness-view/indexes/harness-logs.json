@@ -1,14 +1,70 @@
 {
   "base": "harness/logs",
   "categories": [
+    "actor-graph-extension",
+    "actor-toolkit-scout",
+    "semantic-bridge-architect",
     "tamer",
+    "test-audit",
     "test-sentinel"
   ],
   "counts": {
-    "tamer": 3,
+    "actor-graph-extension": 1,
+    "actor-toolkit-scout": 1,
+    "semantic-bridge-architect": 2,
+    "tamer": 4,
+    "test-audit": 1,
     "test-sentinel": 4
   },
   "items": [
+    {
+      "category": "semantic-bridge-architect",
+      "file": "harness/logs/semantic-bridge-architect/2026-05-18-15-30-phase2-foundation.md",
+      "date": "2026-05-18",
+      "time": "15:30",
+      "title": "phase2 foundation",
+      "size": 7379
+    },
+    {
+      "category": "actor-toolkit-scout",
+      "file": "harness/logs/actor-toolkit-scout/2026-05-18-15-00-orleans-fixture.md",
+      "date": "2026-05-18",
+      "time": "15:00",
+      "title": "orleans fixture",
+      "size": 5939
+    },
+    {
+      "category": "semantic-bridge-architect",
+      "file": "harness/logs/semantic-bridge-architect/2026-05-18-13-00-roslyn-phase1-foundation.md",
+      "date": "2026-05-18",
+      "time": "13:00",
+      "title": "roslyn phase1 foundation",
+      "size": 6697
+    },
+    {
+      "category": "actor-graph-extension",
+      "file": "harness/logs/actor-graph-extension/2026-05-18-12-31-after-r1-r2-baseline.md",
+      "date": "2026-05-18",
+      "time": "12:31",
+      "title": "after r1 r2 baseline",
+      "size": 7326
+    },
+    {
+      "category": "test-audit",
+      "file": "harness/logs/test-audit/2026-05-18-12-30-baseline-after-r1-r2.md",
+      "date": "2026-05-18",
+      "time": "12:30",
+      "title": "baseline after r1 r2",
+      "size": 4783
+    },
+    {
+      "category": "tamer",
+      "file": "harness/logs/tamer/2026-05-18-12-00-residual-improvements-audit.md",
+      "date": "2026-05-18",
+      "time": "12:00",
+      "title": "residual improvements audit",
+      "size": 10406
+    },
     {
       "category": "tamer",
       "file": "harness/logs/tamer/2026-05-18-01-16-add-language-and-actor-experts.md",
