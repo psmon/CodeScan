@@ -24,6 +24,7 @@ publish/
 
 # Local AI/tooling folders
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
 
 # Test and coverage output
 TestResults/
