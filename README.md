@@ -71,9 +71,16 @@ Scanning can be launched from the terminal interface with method/comment extract
 
 | OS | Architecture | Primary command | Alternative |
 |----|--------------|-----------------|-------------|
-| **Windows** | x64 | `winget install psmon.CodeScan` | `npm install -g codescan-cli` (if Node is already installed) |
+| **Windows** | x64 | `winget install psmon.CodeScan` | `npm install -g @psmon/codescan-cli` (if Node is already installed) |
 | **macOS** | arm64 (Apple Silicon) | `brew install psmon/codescan/codescan` | — |
-| **Linux** | x64 / arm64 | `npm install -g codescan-cli` | — |
+| **Linux** | x64 / arm64 | `npm install -g @psmon/codescan-cli` | — |
+
+> **⚠ Important: install the scoped name `@psmon/codescan-cli`.**
+> An unrelated third party squatted the bare `codescan-cli` name on npm
+> before we published. That package is broken (its own ESM/CJS mismatch
+> crashes on `codescan` launch) and has nothing to do with CodeScan.
+> If you installed it by mistake, run `npm uninstall -g codescan-cli`
+> first, then install `@psmon/codescan-cli` above.
 
 After install, verify:
 
@@ -86,7 +93,7 @@ codescan --help
 > The GitHub Release pipeline is live and produces the binaries every channel pulls from.
 > · **Homebrew tap** — live at [`psmon/homebrew-codescan`](https://github.com/psmon/homebrew-codescan). `brew tap psmon/codescan && brew install codescan` works today on Apple Silicon Macs.
 > · **winget** — manifest at [`packaging/winget/manifests/p/psmon/CodeScan/`](packaging/winget/manifests/p/psmon/CodeScan/), pending PR to `microsoft/winget-pkgs`. Until merged, test locally — see [Testing winget locally on Windows](#testing-winget-locally-on-windows) below.
-> · **npm (`codescan-cli`)** — package at [`packaging/npm/codescan-cli/`](packaging/npm/codescan-cli/), pending publish to npm registry.
+> · **npm (`@psmon/codescan-cli`)** — package at [`packaging/npm/codescan-cli/`](packaging/npm/codescan-cli/), pending publish to npm registry. The bare `codescan-cli` name is held by an unrelated third party — always use the scoped name above.
 > Until each channel goes live, the [direct installers](#direct-installer-fallback) below work today.
 
 #### Testing winget locally on Windows
@@ -111,7 +118,7 @@ This is winget's built-in safety guard against arbitrary-yaml installs — once 
 
 - **winget (Windows)** — Microsoft's native Windows package manager. Portable install, no admin needed, PATH handled automatically.
 - **Homebrew (macOS)** — De-facto package manager for macOS developers. v1 ships **arm64 only** (Apple Silicon); Intel Mac users should build from source or use Rosetta with the arm64 build. Intel Mac shipping is a v2 candidate.
-- **npm (Linux + Windows alternative)** — Picked over apt/dnf/snap because npm is universally available across Linux distros and the CodeScan release pipeline can serve **all four binaries** (`linux-x64`, `linux-arm64`, `osx-arm64`, `win-x64`) from a single wrapper package. The npm package is a thin postinstall wrapper that downloads the right native binary from GitHub Releases. On Windows, `winget` stays the recommended path (no Node.js required), but `npm install -g codescan-cli` also works if you already have Node and want toolchain consistency. **Linux arm64 is a deliberate first-class target** — see [Why AOT? — Edge AI trend and the value of a single binary](#why-aot--edge-ai-trend-and-the-value-of-a-single-binary) at the bottom of this README for why arm64 SBC (Raspberry Pi / Jetson / Latte Panda) deployment is a key forward-looking scenario for this tool.
+- **npm (Linux + Windows alternative)** — Picked over apt/dnf/snap because npm is universally available across Linux distros and the CodeScan release pipeline can serve **all four binaries** (`linux-x64`, `linux-arm64`, `osx-arm64`, `win-x64`) from a single wrapper package. The npm package is a thin postinstall wrapper that downloads the right native binary from GitHub Releases. On Windows, `winget` stays the recommended path (no Node.js required), but `npm install -g @psmon/codescan-cli` also works if you already have Node and want toolchain consistency. **Use the scoped name `@psmon/codescan-cli`** — the bare `codescan-cli` name is squatted by an unrelated, broken third-party package. **Linux arm64 is a deliberate first-class target** — see [Why AOT? — Edge AI trend and the value of a single binary](#why-aot--edge-ai-trend-and-the-value-of-a-single-binary) at the bottom of this README for why arm64 SBC (Raspberry Pi / Jetson / Latte Panda) deployment is a key forward-looking scenario for this tool.
 
 ### Linux: x64 vs arm64
 

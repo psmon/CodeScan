@@ -1,4 +1,4 @@
-# codescan-cli
+# @psmon/codescan-cli
 
 > npm install entry point for [CodeScan](https://github.com/psmon/CodeScan).
 > CodeScan itself is a .NET 10 single-binary tool — this package is a thin
@@ -8,9 +8,16 @@
 ## Install
 
 ```bash
-npm install -g codescan-cli
+npm install -g @psmon/codescan-cli
 codescan --help
 ```
+
+> **Heads up — the unscoped `codescan-cli` name is NOT us.**
+> An unrelated third party registered the bare `codescan-cli` name on npm
+> first. That package is broken (its own ESM/CJS mismatch crashes on launch)
+> and has nothing to do with CodeScan. Always install the scoped name
+> `@psmon/codescan-cli`. If you previously installed the wrong one, remove
+> it with `npm uninstall -g codescan-cli`.
 
 ## Supported platforms (v1)
 
@@ -49,8 +56,8 @@ musl/Alpine Linux and Intel Mac are v2 candidates.
 
 CodeScan stores its DB, logs, and config under `~/.codescan/`. That directory
 is **never** modified by install or uninstall — it survives upgrades and
-package removal. `npm uninstall -g codescan-cli` only removes the vendored
-binary inside this package.
+package removal. `npm uninstall -g @psmon/codescan-cli` only removes the
+vendored binary inside this package.
 
 ## Manual install (if `postinstall` is blocked)
 

@@ -51,7 +51,7 @@ CodeScan의 지식, 아키텍처, 간편 설치, 배포 운영 같은 기술 주
 | SBOM | `sbom.cdx.json` (CycloneDX) — Release asset에 포함 |
 | 버전 정책 | `version.txt` 단일 소스 → tag `v{version}` → Release title 동일 |
 | Windows 채널 | winget (portable zip) |
-| Linux 채널 | npm 글로벌 래퍼 (`codescan-cli`) |
+| Linux 채널 | npm 글로벌 래퍼 (`@psmon/codescan-cli` — 짧은 `codescan-cli`는 제3자 squat) |
 | macOS 채널 | Homebrew tap (`psmon/homebrew-codescan`) |
 | 보조 설치 경로 | 직접 스크립트 인스톨러 (Win PowerShell / Unix shell) |
 | 코드 서명 (Windows) | v1 미적용, v1.x 후속 평가 |
@@ -67,7 +67,7 @@ CodeScan의 지식, 아키텍처, 간편 설치, 배포 운영 같은 기술 주
 | 플랫폼 | 채널 | 사용자 설치 경험 | 역할 |
 |--------|------|------------------|------|
 | Windows | winget | `winget install psmon.CodeScan` | 공식 Windows 설치 경로 |
-| Linux 계열 | npm | `npm install -g codescan-cli` | 배포 진입점 및 바이너리 설치 래퍼 |
+| Linux 계열 | npm | `npm install -g @psmon/codescan-cli` | 배포 진입점 및 바이너리 설치 래퍼 |
 | macOS | Homebrew | `brew install psmon/codescan/codescan` | 공식 macOS 설치 경로 (tap 운영) |
 
 ## 공통 배포 원칙
@@ -216,9 +216,11 @@ Installers:
 ### 설치 경험
 
 ```bash
-npm install -g codescan-cli
+npm install -g @psmon/codescan-cli
 codescan --version
 ```
+
+> 반드시 스코프 붙은 `@psmon/codescan-cli`로 설치한다. 짧은 `codescan-cli`는 무관한 제3자가 npm에 선점한 상태이며 설치 즉시 죽는 깨진 패키지이므로 절대 사용하지 않는다.
 
 ### 패키징 방향
 
@@ -252,7 +254,7 @@ codescan-cli/
 
 ```json
 {
-  "name": "codescan-cli",
+  "name": "@psmon/codescan-cli",
   "version": "0.1.0",
   "bin": { "codescan": "bin/codescan.js" },
   "scripts": {
@@ -263,11 +265,13 @@ codescan-cli/
 }
 ```
 
+> 짧은 이름 `codescan-cli`는 2026-03경 무관한 npm 사용자(`o-town`)가 v1.0.0으로 선점했으므로 우리는 사용할 수 없다. 스코프 `@psmon`을 publish 시점에 자동 생성하여 점유한다. publish 명령은 `npm publish --access public`이어야 한다 (스코프 패키지 기본값은 private).
+
 ### 검토 결과 및 결정
 
 | 항목 | 결정 |
 |------|------|
-| 패키지명 | `codescan-cli` (사전 확보 필요) |
+| 패키지명 | `@psmon/codescan-cli` (스코프 패키지 — 짧은 `codescan-cli`는 제3자 squat으로 확보 불가) |
 | 설치 방식 | postinstall 다운로드 (v1) → optional deps (v2) |
 | 프록시/오프라인 대응 | `HTTPS_PROXY`/`HTTP_PROXY` 환경변수 존중, 실패 시 수동 설치 URL 출력 |
 | glibc/musl | glibc만 지원 (musl/Alpine 사용자는 직접 빌드 안내) |
@@ -557,7 +561,7 @@ codescan gui start --port 8085
 ```bash
 # 제거
 winget uninstall psmon.CodeScan          # Windows
-npm uninstall -g codescan-cli            # Linux
+npm uninstall -g @psmon/codescan-cli     # Linux
 brew uninstall codescan                  # macOS
 
 # ~/.codescan/ 디렉토리가 그대로 남아있는지 확인
@@ -578,7 +582,7 @@ codescan search "main"
 
 ### 다운그레이드 / 롤백
 
-- 패키지 매니저별 표준 흐름 (`winget install --version`, `npm install -g codescan-cli@x.y.z`, `brew install codescan@x.y.z`).
+- 패키지 매니저별 표준 흐름 (`winget install --version`, `npm install -g @psmon/codescan-cli@x.y.z`, `brew install codescan@x.y.z`).
 - 신규 스키마 → 구버전 호환은 보장하지 않는다. 다운그레이드 시 백업 DB를 수동 복구한다.
 - 후속 검토: `codescan db restore <backup-path>` 명령 도입.
 
@@ -604,6 +608,6 @@ v1 채택 우선순위와 단계:
 2. **직접 스크립트 인스톨러** — Windows PowerShell + Unix shell
 3. **winget 매니페스트 제출** — `psmon.CodeScan`
 4. **Homebrew tap 운영** — `psmon/homebrew-codescan`
-5. **npm 래퍼 publish** — `codescan-cli` (postinstall 다운로드 방식)
+5. **npm 래퍼 publish** — `@psmon/codescan-cli` (postinstall 다운로드 방식, `npm publish --access public`)
 
 각 단계는 직전 단계의 GitHub Release 결과를 의존한다. 패키지 매니저 channel은 수동 publish로 시작하여 안정화 후 CI에 통합한다.

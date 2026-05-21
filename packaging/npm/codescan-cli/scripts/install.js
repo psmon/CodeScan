@@ -16,8 +16,8 @@ const { execSync } = require('child_process');
 
 const REPO = process.env.CODESCAN_REPO || 'psmon/CodeScan';
 
-function log(msg)  { process.stdout.write('codescan-cli: ' + msg + '\n'); }
-function warn(msg) { process.stderr.write('codescan-cli: ' + msg + '\n'); }
+function log(msg)  { process.stdout.write('@psmon/codescan-cli: ' + msg + '\n'); }
+function warn(msg) { process.stderr.write('@psmon/codescan-cli: ' + msg + '\n'); }
 function die(msg)  { warn(msg); process.exit(1); }
 
 // 1. Skip if user opted out (CI builds, mirror caches, etc.)
@@ -62,7 +62,7 @@ function buildAgentOpts() {
 
 function get(url) {
     return new Promise((resolve, reject) => {
-        const opts = { headers: { 'User-Agent': 'codescan-cli-installer' } };
+        const opts = { headers: { 'User-Agent': 'psmon-codescan-cli-installer' } };
         const agent = buildAgentOpts();
         if (agent) opts.agent = agent;
         const doReq = (u) => https.get(u, opts, (res) => {

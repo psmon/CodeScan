@@ -217,9 +217,9 @@ brew install codescan</pre>
     </div>
     <div class="install-card">
       <div><span class="os">Linux</span><span class="arch">x64 · arm64 (glibc) — also Windows x64</span></div>
-      <pre>npm install -g codescan-cli</pre>
-      <div class="note en">Thin wrapper — postinstall auto-detects OS+arch and downloads the right binary from GitHub Releases. Works on Linux, macOS arm64, and <b style="color:var(--mint)">Windows x64</b> too (winget remains the recommended Windows path). Registry publish pending. Until then, use the direct installer below.</div>
-      <div class="note ko">얇은 래퍼 — postinstall 이 OS+arch 자동 감지 후 GitHub Releases 에서 적합한 바이너리 다운로드. Linux, macOS arm64, <b style="color:var(--mint)">Windows x64</b> 모두 동작 (Windows 는 winget 이 여전히 권장). 레지스트리 publish 대기 중. 그때까지는 아래 직접 인스톨러 사용.</div>
+      <pre>npm install -g @psmon/codescan-cli</pre>
+      <div class="note en">Thin wrapper — postinstall auto-detects OS+arch and downloads the right binary from GitHub Releases. Works on Linux, macOS arm64, and <b style="color:var(--mint)">Windows x64</b> too (winget remains the recommended Windows path). Registry publish pending. Until then, use the direct installer below. <b style="color:#ff8a8a">Use the scoped name <code>@psmon/codescan-cli</code></b> — the bare <code>codescan-cli</code> on npm is an unrelated, broken third-party squat.</div>
+      <div class="note ko">얇은 래퍼 — postinstall 이 OS+arch 자동 감지 후 GitHub Releases 에서 적합한 바이너리 다운로드. Linux, macOS arm64, <b style="color:var(--mint)">Windows x64</b> 모두 동작 (Windows 는 winget 이 여전히 권장). 레지스트리 publish 대기 중. 그때까지는 아래 직접 인스톨러 사용. <b style="color:#ff8a8a">반드시 스코프 붙은 <code>@psmon/codescan-cli</code> 사용</b> — npm 의 짧은 <code>codescan-cli</code> 는 무관한 제3자의 깨진 squat 패키지.</div>
     </div>
   </div>
 
@@ -341,12 +341,12 @@ sh install.sh</pre>
       <li>
         <strong class="en">Install (one of the three lines from above)</strong>
         <strong class="ko">설치 (위 세 줄 중 하나)</strong>
-        <code class="en">winget install psmon.CodeScan   # Windows
+        <code class="en">winget install psmon.CodeScan          # Windows
 brew install psmon/codescan/codescan   # macOS
-npm install -g codescan-cli   # Linux</code>
-        <code class="ko">winget install psmon.CodeScan   # Windows
+npm install -g @psmon/codescan-cli     # Linux</code>
+        <code class="ko">winget install psmon.CodeScan          # Windows
 brew install psmon/codescan/codescan   # macOS
-npm install -g codescan-cli   # Linux</code>
+npm install -g @psmon/codescan-cli     # Linux</code>
       </li>
       <li>
         <strong class="en">Scan a project (register + analyze + display)</strong>

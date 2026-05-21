@@ -87,8 +87,10 @@ Documented in
 | OS | Command |
 |----|---------|
 | Windows | `winget install psmon.CodeScan` |
-| Linux   | `npm install -g codescan-cli` |
+| Linux   | `npm install -g @psmon/codescan-cli` |
 | macOS   | `brew install psmon/codescan/codescan` |
+
+> The npm package is published under the scoped name `@psmon/codescan-cli`. The bare `codescan-cli` name on npm belongs to an unrelated third party (squat, broken on launch) — do not use it.
 
 Direct script installers (no package manager) are at:
 

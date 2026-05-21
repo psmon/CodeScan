@@ -280,7 +280,7 @@ jobs:
           echo "See packaging/homebrew/README.md for the documented procedure."
 
   publish-npm:
-    name: Publish codescan-cli to npm (manual)
+    name: Publish @psmon/codescan-cli to npm (manual)
     if: false
     needs: [resolve-version, release]
     runs-on: ubuntu-22.04

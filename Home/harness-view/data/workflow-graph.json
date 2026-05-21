@@ -46,8 +46,8 @@
     {
       "id": "install-channels",
       "label": "Install Channels",
-      "description": "Same GitHub Release feeds all install channels — winget (portable), Homebrew tap (psmon/homebrew-codescan), npm wrapper (codescan-cli with postinstall download). Plus direct script installers (install-win.ps1 / install.sh) for environments without a package manager",
-      "mermaid": "flowchart LR\n  REL[(GitHub Release v*)] --> WG[winget portable<br/>microsoft/winget-pkgs PR]\n  REL --> BR[Homebrew tap<br/>psmon/homebrew-codescan]\n  REL --> NP[npm postinstall<br/>codescan-cli]\n  REL --> SW[install-win.ps1]\n  REL --> SL[install.sh]\n  WG -->|Windows x64| U1[User]\n  BR -->|macOS arm64| U1\n  NP -->|Linux x64/arm64| U1\n  SW --> U1\n  SL --> U1",
+      "description": "Same GitHub Release feeds all install channels — winget (portable), Homebrew tap (psmon/homebrew-codescan), npm wrapper (@psmon/codescan-cli with postinstall download; bare codescan-cli is a third-party squat). Plus direct script installers (install-win.ps1 / install.sh) for environments without a package manager",
+      "mermaid": "flowchart LR\n  REL[(GitHub Release v*)] --> WG[winget portable<br/>microsoft/winget-pkgs PR]\n  REL --> BR[Homebrew tap<br/>psmon/homebrew-codescan]\n  REL --> NP[npm postinstall<br/>@psmon/codescan-cli]\n  REL --> SW[install-win.ps1]\n  REL --> SL[install.sh]\n  WG -->|Windows x64| U1[User]\n  BR -->|macOS arm64| U1\n  NP -->|Linux x64/arm64| U1\n  SW --> U1\n  SL --> U1",
       "sourceMermaid": "flowchart TB\n  subgraph Pkg[packaging/]\n    WGM[winget/manifests/<br/>p/psmon/CodeScan/]\n    HB[homebrew/codescan.rb<br/>+ update-formula.sh]\n    NPM[npm/codescan-cli/<br/>scripts/install.js]\n  end\n  subgraph Scr[Script/]\n    SW[install-win.ps1]\n    SL[install.sh]\n  end\n  subgraph CI[.github/workflows/release.yml]\n    PW[publish-winget<br/>if:false v1]\n    PH[publish-homebrew<br/>if:false v1]\n    PN[publish-npm<br/>if:false v1]\n  end\n  PW -.uses.-> WGM\n  PH -.uses.-> HB\n  PN -.uses.-> NPM"
     }
   ]

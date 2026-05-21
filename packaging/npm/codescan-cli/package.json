@@ -1,5 +1,5 @@
 {
-  "name": "codescan-cli",
+  "name": "@psmon/codescan-cli",
   "version": "0.0.0",
   "description": "CLI/TUI/GUI source-code scanner with FTS5 search and git blame. (npm wrapper around the prebuilt CodeScan binary.)",
   "keywords": [

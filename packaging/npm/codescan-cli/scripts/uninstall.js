@@ -12,8 +12,8 @@ const vendor = path.resolve(__dirname, '..', 'vendor');
 try {
     if (fs.existsSync(vendor)) {
         fs.rmSync(vendor, { recursive: true, force: true });
-        process.stdout.write('codescan-cli: removed vendor/\n');
+        process.stdout.write('@psmon/codescan-cli: removed vendor/\n');
     }
 } catch (e) {
-    process.stderr.write('codescan-cli: vendor/ cleanup failed (' + e.message + ') — safe to ignore.\n');
+    process.stderr.write('@psmon/codescan-cli: vendor/ cleanup failed (' + e.message + ') — safe to ignore.\n');
 }
