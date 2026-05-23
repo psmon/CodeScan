@@ -536,6 +536,16 @@ In short — **as small models start doing real work on the edge, the *tooling* 
 
 > For the full build/distribution spec, see [`Docs/install-distribution-strategy.md`](Docs/install-distribution-strategy.md).
 
-## License
+## Blumn Ai Studio
 
-See repository for license information.
+<p align="left">
+  <img src="Home/img/blumn-ai.png" alt="blumn ai studio" width="300" />
+</p>
+
+**Blumn AI Studio**
+
+An R&D Studio researching next-generation AI agents and real-time edge AI infrastructure technologies at Blumn AI.
+This repository is an open-source project that publishes part of those research and development activities.
+
+🌐 https://blumn.ai/
+
