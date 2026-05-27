@@ -177,30 +177,43 @@ public sealed class CodeScanToolbelt
 
     // ------------------------------------------------------------------
     // list_projects
+    // Cap output: a CodeScan DB with 19 indexed projects + verbose addinfo
+    // produced a ~4 KB JSON blob that filled the model's 4096-token context
+    // window when fed back as a tool_result. Limit to the 8 most-recent
+    // projects with addinfo trimmed; expose total count so the model can
+    // ask for more or guide the user to filter.
     // ------------------------------------------------------------------
+    private const int ListProjectsCap = 8;
+    private const int ListProjectsAddInfoMax = 120;
+
     private string ListProjects()
     {
-        var projects = _db.GetProjects();
+        var all = _db.GetProjects();
+        var shown = all.Take(ListProjectsCap).ToList();
         var arr = new JsonArray();
-        foreach (var p in projects)
+        foreach (var p in shown)
         {
             var node = new JsonObject
             {
                 ["id"] = p.Id,
                 ["root_path"] = p.RootPath,
                 ["file_count"] = p.FileCount,
-                ["dir_count"] = p.DirCount,
                 ["last_scanned_at"] = p.LastScannedAt,
-                ["addinfo"] = p.AddInfo,
+                ["addinfo"] = Truncate(p.AddInfo ?? "", ListProjectsAddInfoMax),
             };
             arr.Add((JsonNode)node);
         }
-        return new JsonObject
+
+        var result = new JsonObject
         {
             ["ok"] = true,
-            ["count"] = projects.Count,
+            ["total"] = all.Count,
+            ["shown"] = shown.Count,
             ["projects"] = arr,
-        }.ToJsonString();
+        };
+        if (all.Count > shown.Count)
+            result["note"] = $"only most-recent {shown.Count} of {all.Count} shown; ask user to narrow if needed";
+        return result.ToJsonString();
     }
 
     // ------------------------------------------------------------------

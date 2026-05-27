@@ -155,6 +155,21 @@ public sealed class AgentChatLoop : IAsyncDisposable
             _logger?.Write("raw", rawJson!);
             yield return new ChatTurnUpdate("raw", rawJson!);
 
+            // Empty output recovery: the model occasionally returns zero
+            // tokens once the KV cache approaches the 4096 ctx limit
+            // (observed after a verbose list_projects result). Treat it as
+            // "give up gracefully" — synthesize a done message rather than
+            // breaking the loop and stranding the user.
+            if (string.IsNullOrWhiteSpace(rawJson))
+            {
+                const string fallback =
+                    "(모델이 응답을 생성하지 못했습니다. 컨텍스트가 한계에 가까울 수 있어요 — " +
+                    "질문을 짧게 다시 보내거나 새 채팅 세션을 열어주세요.)";
+                _logger?.Write("done", "(empty raw → synthesized done)");
+                yield return new ChatTurnUpdate("done", fallback);
+                yield break;
+            }
+
             ToolCall? call = null;
             string? parseErr = null;
             try { call = ParseToolCall(rawJson!); }

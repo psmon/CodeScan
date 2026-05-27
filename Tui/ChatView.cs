@@ -49,7 +49,7 @@ public sealed class ChatView : IAsyncDisposable
     private SqliteStore? _db;
     private ChatSessionLogger? _logger;
 
-    private enum Mode { Start, Loading, Chat }
+    private enum Mode { Start, Loading, Chat, TearingDown }
     private Mode _mode = Mode.Start;
     private volatile bool _busy;
     private CancellationTokenSource? _cts;
@@ -200,19 +200,26 @@ public sealed class ChatView : IAsyncDisposable
 
     public bool HandleBack()
     {
+        if (_mode == Mode.TearingDown)
+            return true;  // already unloading — ignore extra Q presses
+
         if (_busy)
         {
             _cts?.Cancel();
             UpdateStatus("cancelling…");
             return true;  // swallow Back during in-flight inference
         }
+
         if (_mode == Mode.Chat)
         {
-            // Confirm before tearing down the loaded model (~5 GB RAM).
-            var pick = MessageBox.Query("End chat?",
-                "Unload the model and return to the menu?",
-                "Unload", "Stay");
-            if (pick != 0) return true;
+            // Teardown directly. Earlier builds showed a MessageBox.Query
+            // confirmation here ("Unload" / "Stay"), but it broke in
+            // Terminal.Gui v2 — pressing Enter on the focused "Unload"
+            // button silently returned a non-zero index, so the popup
+            // appeared and went away without ever invoking teardown. The
+            // user explicitly pressed Q to exit chat; trust the intent.
+            _mode = Mode.TearingDown;
+            UpdateStatus("unloading model…");
             _ = TeardownAsync();
             return true;
         }

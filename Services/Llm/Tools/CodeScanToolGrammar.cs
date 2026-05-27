@@ -13,20 +13,21 @@ public static class CodeScanToolGrammar
     public const string DoneToolName = "done";
 
     /// <summary>
-    /// Builds the runtime system prompt by appending a "PROJECT CONTEXT"
-    /// section to <see cref="SystemPrompt"/>. The section tells the model
-    /// whether `read_file` / `grep_file` can accept relative paths — without
-    /// it, the model emits relative paths against a (none) context and burns
-    /// turns on 404s.
+    /// Builds the runtime system prompt by PREPENDING a "PROJECT CONTEXT"
+    /// section to <see cref="SystemPrompt"/>. Gemma gives more weight to
+    /// the first ~50 tokens than to anything trailing the long instruction
+    /// block, so keeping the file-path constraint at the very top is the
+    /// only reliable way to stop it from emitting `read_file("README.md")`
+    /// when no project root is bound (which then 404s and burns turns).
     /// </summary>
     public static string BuildSystemPrompt(string? projectRoot)
     {
         var ctx = string.IsNullOrEmpty(projectRoot)
             ? "PROJECT CONTEXT: (none). `read_file` / `grep_file` only accept ABSOLUTE paths. " +
-              "Relative paths will fail. Use `list_projects` first if the user references their codebase."
+              "If the user references their codebase, call `list_projects` first and use a full root_path from the result."
             : $"PROJECT CONTEXT: project root = {projectRoot}. " +
               "`read_file` / `grep_file` accept paths relative to that root (preferred) OR absolute paths.";
-        return $"{SystemPrompt}\n\n{ctx}";
+        return $"{ctx}\n\n{SystemPrompt}";
     }
 
     public const string SystemPrompt = """
