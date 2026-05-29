@@ -45,14 +45,23 @@ public static class GemmaChatTemplate
         $"<|turn>model\n";
 
     /// <summary>
-    /// Tool-result turn. We wrap the JSON payload with the Gemma 4 native
-    /// tool_response brackets so the model parses it as a structured tool
-    /// reply rather than free user text. <c>toolName</c> is the name of
-    /// the tool the model just called — taken from the prior model turn.
+    /// Tool-result turn. We deliberately do NOT use the Gemma 4 native
+    /// <c>&lt;|tool_response&gt;</c> brackets here even though the model's
+    /// chat_template macro emits them — token id 50 (<c>&lt;|tool_response&gt;</c>)
+    /// is explicitly marked as an EOG token by the GGUF. Tokenising that
+    /// literal string inside a user prompt makes the BPE tokenizer match
+    /// the special-token id, the inference loop sees EOG on the very
+    /// first decode step, and we get an empty raw response. Native
+    /// tool_response usage requires emitting the marker from inside the
+    /// model's own turn (paired with a prior &lt;|tool_call&gt;); since our
+    /// JSON GBNF doesn't emit native tool_calls, we'd be lying about the
+    /// turn structure if we faked tool_response brackets in user input.
+    ///
+    /// Fallback: plain text wrapper labelled with the tool name. Matches
+    /// the Gemma 2/3 pattern the model also tolerates well.
     /// </summary>
     public static string FormatToolResult(string toolName, string toolResultJson) =>
         $"<|turn>user\n" +
-        $"<|tool_response>response:{toolName}{toolResultJson}<tool_response|>" +
-        $"<turn|>\n" +
+        $"Tool result for `{toolName}`:\n{toolResultJson}<turn|>\n" +
         $"<|turn>model\n";
 }
