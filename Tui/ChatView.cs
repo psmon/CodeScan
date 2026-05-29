@@ -32,6 +32,8 @@ public sealed class ChatView : IAsyncDisposable
     private readonly RadioGroup _deviceRadio;
     private readonly Label _ctxLabel;
     private readonly RadioGroup _ctxRadio;
+    private readonly Label _responseLabel;
+    private readonly RadioGroup _responseRadio;
     private readonly Label _modelInfoLabel;
     private readonly Button _startBtn;
     private readonly Button _pickProjectBtn;
@@ -44,6 +46,12 @@ public sealed class ChatView : IAsyncDisposable
     private readonly List<GpuDevice> _devices = new();
     private readonly List<int> _ctxChoiceTokens = new();  // mirrors _ctxRadio order
     private GgufMetadata? _modelMeta;
+
+    // Maps _responseRadio.SelectedItem → AgentChatLoop.maxTokensPerTurn.
+    // Capped at 4096 so a runaway model can't burn its entire ctx window
+    // in one turn; the user can raise this with a fresh ChatView.
+    private static readonly int[] ResponseTokenChoices = { 512, 1024, 2048, 4096 };
+    private const int DefaultResponseIndex = 1;  // Medium
 
     // Download screen
     private readonly Label _downloadTitleLabel;
@@ -160,10 +168,29 @@ public sealed class ChatView : IAsyncDisposable
             Visible = false,
         };
 
+        // Per-turn response cap. The model still obeys its system-prompt
+        // rules ("plain prose, 4-6 sentences"), but a higher cap lets it
+        // produce multi-paragraph analysis when asked for one.
+        _responseLabel = new Label
+        {
+            Text = "Response:",
+            X = 1, Y = 22,
+            Visible = false,
+        };
+
+        _responseRadio = new RadioGroup
+        {
+            X = 11, Y = 22,
+            Orientation = Orientation.Horizontal,
+            RadioLabels = new[] { "Short (512)", "Medium (1024)", "Long (2048)", "Max (4096)" },
+            SelectedItem = DefaultResponseIndex,
+            Visible = false,
+        };
+
         _modelInfoLabel = new Label
         {
             Text = "",
-            X = 1, Y = 22,
+            X = 1, Y = 24,
             Width = Dim.Fill(2),
             Height = 2,
             Visible = false,
@@ -172,7 +199,7 @@ public sealed class ChatView : IAsyncDisposable
         _pickProjectBtn = new Button
         {
             Text = "[Pick Project Context]",
-            X = 1, Y = 25,
+            X = 1, Y = 27,
             Visible = false,
         };
         _pickProjectBtn.Accepting += (_, _) => PickProject();
@@ -180,7 +207,7 @@ public sealed class ChatView : IAsyncDisposable
         _startBtn = new Button
         {
             Text = ">>> Load Model & Start Chat <<<",
-            X = 26, Y = 25,
+            X = 26, Y = 27,
             Visible = false,
         };
         _startBtn.Accepting += (_, _) => _ = StartChatAsync();
@@ -188,7 +215,7 @@ public sealed class ChatView : IAsyncDisposable
         _downloadBtn = new Button
         {
             Text = "[Download Default Model (Gemma 4 E4B, ~5GB)]",
-            X = 1, Y = 27,
+            X = 1, Y = 29,
             Visible = false,
         };
         _downloadBtn.Accepting += (_, _) => _ = DownloadDefaultModelAsync();
@@ -280,6 +307,7 @@ public sealed class ChatView : IAsyncDisposable
 
         root.Add(_titleLabel, _hintLabel, _modelList, _modelPathLabel,
             _projectPathLabel, _deviceLabel, _deviceRadio, _ctxLabel, _ctxRadio,
+            _responseLabel, _responseRadio,
             _modelInfoLabel, _pickProjectBtn, _startBtn, _downloadBtn,
             _downloadTitleLabel, _downloadStatusLabel, _downloadBarLabel, _cancelDownloadBtn,
             _historyView, _statusLabel, _inputField, _sendBtn);
@@ -300,6 +328,7 @@ public sealed class ChatView : IAsyncDisposable
         foreach (var v in new View[]
                  { _titleLabel, _hintLabel, _modelList, _modelPathLabel,
                    _projectPathLabel, _deviceLabel, _deviceRadio, _ctxLabel, _ctxRadio,
+                   _responseLabel, _responseRadio,
                    _modelInfoLabel, _pickProjectBtn, _startBtn, _downloadBtn,
                    _downloadTitleLabel, _downloadStatusLabel, _downloadBarLabel, _cancelDownloadBtn,
                    _historyView, _statusLabel, _inputField, _sendBtn })
@@ -379,6 +408,8 @@ public sealed class ChatView : IAsyncDisposable
         _deviceRadio.Visible = true;
         _ctxLabel.Visible = true;
         _ctxRadio.Visible = true;
+        _responseLabel.Visible = true;
+        _responseRadio.Visible = true;
         _modelInfoLabel.Visible = true;
         _pickProjectBtn.Visible = true;
         _startBtn.Visible = true;
@@ -601,6 +632,8 @@ public sealed class ChatView : IAsyncDisposable
         _deviceRadio.Visible = false;
         _ctxLabel.Visible = false;
         _ctxRadio.Visible = false;
+        _responseLabel.Visible = false;
+        _responseRadio.Visible = false;
         _modelInfoLabel.Visible = false;
         _pickProjectBtn.Visible = false;
         _startBtn.Visible = false;
@@ -765,6 +798,10 @@ public sealed class ChatView : IAsyncDisposable
         if (ctxIdx < 0 || ctxIdx >= _ctxChoiceTokens.Count) ctxIdx = 0;
         var ctxSize = (uint)_ctxChoiceTokens[ctxIdx];
 
+        var respIdx = _responseRadio.SelectedItem;
+        if (respIdx < 0 || respIdx >= ResponseTokenChoices.Length) respIdx = DefaultResponseIndex;
+        var maxResponseTokens = ResponseTokenChoices[respIdx];
+
         var device = deviceIdx > 0 && deviceIdx - 1 < _devices.Count ? _devices[deviceIdx - 1] : null;
         var gpuLayers = device != null ? 999 : 0;
         var mainGpu = device != null ? Math.Max(0, device.VulkanIndex) : 0;
@@ -815,7 +852,8 @@ public sealed class ChatView : IAsyncDisposable
                 new CodeScanToolbelt(_db, _selectedProjectRoot),
                 projectRoot: _selectedProjectRoot,
                 logger: _logger,
-                maxIterations: 6);
+                maxIterations: 6,
+                maxTokensPerTurn: maxResponseTokens);
 
             AppendHistory(
                 $"Model loaded.\n" +
@@ -852,6 +890,8 @@ public sealed class ChatView : IAsyncDisposable
         _deviceRadio.Visible = false;
         _ctxLabel.Visible = false;
         _ctxRadio.Visible = false;
+        _responseLabel.Visible = false;
+        _responseRadio.Visible = false;
         _modelInfoLabel.Visible = false;
         _pickProjectBtn.Visible = false;
         _startBtn.Visible = false;
