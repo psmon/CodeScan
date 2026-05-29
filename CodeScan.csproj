@@ -53,6 +53,13 @@
         <PackageReference Include="LLamaSharp.Backend.Vulkan" Version="0.27.0" />
     </ItemGroup>
 
+    <!-- Develop-only GPU memory telemetry. PerformanceCounter is Windows-PerfMon
+         only and uses registry reflection internally — kept off Release / AOT
+         publish so the trimmed binary stays portable across OSes. -->
+    <ItemGroup Condition="'$(Configuration)' == 'Debug' AND '$(OS)' == 'Windows_NT'">
+        <PackageReference Include="System.Diagnostics.PerformanceCounter" Version="10.0.0" />
+    </ItemGroup>
+
     <!-- ============================================================
          Auto Version Bump: 빌드마다 마이너(끝자리) +1
          마이너 >= 100 → 마이너 리셋, 중간 버전 +1

@@ -2,6 +2,9 @@ using System.Reflection;
 using CodeScan.Commands;
 using CodeScan.Services;
 using CodeScan.Tui;
+#if DEBUG
+using CodeScan.Services.Llm;
+#endif
 
 namespace CodeScan;
 
@@ -17,6 +20,19 @@ class Program
     static int Main(string[] args)
     {
         Console.OutputEncoding = System.Text.Encoding.UTF8;
+
+#if DEBUG
+        // Develop-only PerfMon-backed GPU memory telemetry. Skips silently
+        // on non-Windows / missing counters. Stripped from Release builds.
+        if (OperatingSystem.IsWindows())
+        {
+            GpuMetricsCollector.StartIfWindows();
+            // Opt-in console dump via env var so a regular `dotnet run`
+            // doesn't get spammed unless asked.
+            if (Environment.GetEnvironmentVariable("CODESCAN_GPU_METRICS") == "1")
+                GpuMetricsCollector.AttachConsoleListener();
+        }
+#endif
 
         if (args.Length == 0)
         {
