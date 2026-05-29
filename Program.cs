@@ -24,14 +24,16 @@ class Program
 #if DEBUG
         // Develop-only PerfMon-backed GPU memory telemetry. Skips silently
         // on non-Windows / missing counters. Stripped from Release builds.
+        //
+        // No console listener is attached here on purpose — interleaved
+        // stdout would corrupt the TUI's terminal rendering and pollute
+        // smoke-test output. The "CodeScan.Gpu" Meter is still registered,
+        // so external tools (dotnet-counters / OTel exporters) pick it up
+        // directly. To dump readings locally during a CLI session, call
+        // GpuMetricsCollector.AttachConsoleListener() explicitly from a
+        // non-TUI entry point.
         if (OperatingSystem.IsWindows())
-        {
             GpuMetricsCollector.StartIfWindows();
-            // Opt-in console dump via env var so a regular `dotnet run`
-            // doesn't get spammed unless asked.
-            if (Environment.GetEnvironmentVariable("CODESCAN_GPU_METRICS") == "1")
-                GpuMetricsCollector.AttachConsoleListener();
-        }
 #endif
 
         if (args.Length == 0)

@@ -1,35 +1,33 @@
 #if DEBUG
 using System.Diagnostics;
-using System.Diagnostics.Metrics;
+using System.Diagnostics.Tracing;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 
 namespace CodeScan.Services.Llm;
 
 /// <summary>
-/// Develop-mode GPU memory telemetry surfaced through
-/// <see cref="System.Diagnostics.Metrics"/>. We tap the Windows PerfMon
-/// "GPU Adapter Memory" counter set — the same numbers Task Manager's
-/// Performance tab shows — and discover every adapter instance at startup
-/// instead of hardcoding a per-machine LUID string.
+/// Develop-mode GPU memory telemetry surfaced through the legacy
+/// <see cref="System.Diagnostics.Tracing.EventSource"/> + PollingCounter
+/// path so JetBrains Rider's Diagnostic Tools (and the dotnet-counters CLI)
+/// can pick it up without an extra exporter. The newer
+/// <see cref="System.Diagnostics.Metrics.Meter"/> API isn't shown in Rider's
+/// in-IDE counter view today — Rider listens on the EventPipe stream that
+/// EventSource writes to.
 ///
 /// Compiled out of Release / AOT publish (see <c>#if DEBUG</c> and the
 /// matching conditional <see cref="System.Diagnostics.PerformanceCounter"/>
 /// reference in CodeScan.csproj) so the shipped binary stays portable and
 /// trim-safe.
 ///
-/// Meter name: <c>CodeScan.Gpu</c>. Listen for it with
-/// <c>MeterListener</c>, dotnet-counters, or any OTel-style exporter.
-/// <see cref="AttachConsoleListener"/> spins up a 5-second console dump
-/// for ad-hoc development sessions.
+/// EventSource name: <c>CodeScan-Gpu</c>. Open Rider → Run with profiler
+/// (or attach Diagnostic Tools) → "Counters" tab to see the readings live.
 /// </summary>
 [SupportedOSPlatform("windows")]
 public static class GpuMetricsCollector
 {
-    private static readonly Meter Meter = new("CodeScan.Gpu");
     private static readonly List<AdapterCounters> Adapters = new();
     private static bool _started;
-    private static MeterListener? _consoleListener;
 
     private sealed record AdapterCounters(
         string Instance,
@@ -61,8 +59,8 @@ public static class GpuMetricsCollector
                         "GPU Adapter Memory", "Dedicated Usage", instance, readOnly: true);
                     var shared = new PerformanceCounter(
                         "GPU Adapter Memory", "Shared Usage", instance, readOnly: true);
-                    // First read primes the counter so the next NextValue()
-                    // returns a real delta-based number instead of 0.
+                    // First read primes the counter so subsequent NextValue()
+                    // returns a real number instead of 0.
                     _ = dedicated.NextValue();
                     _ = shared.NextValue();
                     Adapters.Add(new AdapterCounters(instance, dedicated, shared));
@@ -88,78 +86,58 @@ public static class GpuMetricsCollector
 
         if (Adapters.Count == 0) return;
 
-        Meter.CreateObservableGauge<long>(
-            "gpu.memory.dedicated_bytes",
-            () => Adapters.Select(a => new Measurement<long>(
-                SafeNext(a.Dedicated),
-                new KeyValuePair<string, object?>("adapter", a.Instance))),
-            unit: "By",
-            description: "Per-adapter dedicated VRAM usage (Windows PerfMon: GPU Adapter Memory / Dedicated Usage)");
-
-        Meter.CreateObservableGauge<long>(
-            "gpu.memory.shared_bytes",
-            () => Adapters.Select(a => new Measurement<long>(
-                SafeNext(a.Shared),
-                new KeyValuePair<string, object?>("adapter", a.Instance))),
-            unit: "By",
-            description: "Per-adapter shared system-memory usage attributed to the GPU");
+        // PollingCounter has no concept of tags — sum across every adapter
+        // for the IDE view. Per-adapter breakdown stays available via PerfMon /
+        // Task Manager when needed.
+        GpuEventSource.Log.Bind(
+            dedicatedBytes: () => Adapters.Sum(a => SafeNext(a.Dedicated)),
+            sharedBytes: () => Adapters.Sum(a => SafeNext(a.Shared)));
 
         _started = true;
     }
 
-    /// <summary>
-    /// Optional helper: dumps the current gauge values to stdout every
-    /// <paramref name="interval"/>. Convenient for "run the TUI and watch
-    /// VRAM" loops; production-grade scrape paths should use a real
-    /// MeterListener / OTel exporter instead.
-    /// </summary>
-    public static void AttachConsoleListener(TimeSpan? interval = null)
+    private static double SafeNext(PerformanceCounter c)
     {
-        if (!_started || _consoleListener != null) return;
-
-        var window = interval ?? TimeSpan.FromSeconds(5);
-        var listener = new MeterListener
-        {
-            InstrumentPublished = (instr, l) =>
-            {
-                if (instr.Meter.Name == "CodeScan.Gpu") l.EnableMeasurementEvents(instr);
-            }
-        };
-        listener.SetMeasurementEventCallback<long>((instr, value, tags, _) =>
-        {
-            var adapter = "";
-            foreach (var kv in tags)
-                if (kv.Key == "adapter") adapter = kv.Value?.ToString() ?? "";
-            Console.WriteLine($"[gpu-metrics] {instr.Name} adapter={Truncate(adapter, 32)} value={value:N0} bytes");
-        });
-        listener.Start();
-        _consoleListener = listener;
-
-        // Drive the polling loop on a background thread so Main doesn't
-        // block. Marked background so process shutdown isn't held back.
-        var t = new Thread(() =>
-        {
-            while (true)
-            {
-                try { listener.RecordObservableInstruments(); }
-                catch { /* one-off failure shouldn't kill the loop */ }
-                Thread.Sleep(window);
-            }
-        })
-        {
-            IsBackground = true,
-            Name = "gpu-metrics-poll",
-        };
-        t.Start();
-    }
-
-    private static long SafeNext(PerformanceCounter c)
-    {
-        try { return (long)c.NextValue(); }
+        try { return c.NextValue(); }
         catch { return 0; }
     }
+}
 
-    private static string Truncate(string s, int max) =>
-        s.Length <= max ? s : s[..max] + "…";
+/// <summary>
+/// EventPipe-visible counter source. PollingCounter callbacks fire on
+/// demand from whatever listener attaches (Rider's Diagnostic Tools,
+/// dotnet-counters, dotTrace), so we don't have to drive a polling loop
+/// ourselves.
+/// </summary>
+[EventSource(Name = "CodeScan-Gpu")]
+internal sealed class GpuEventSource : EventSource
+{
+    public static readonly GpuEventSource Log = new();
+
+    private PollingCounter? _dedicated;
+    private PollingCounter? _shared;
+
+    private GpuEventSource() { }
+
+    internal void Bind(Func<double> dedicatedBytes, Func<double> sharedBytes)
+    {
+        _dedicated = new PollingCounter("gpu-dedicated-bytes", this, dedicatedBytes)
+        {
+            DisplayName = "GPU Dedicated VRAM",
+            DisplayUnits = "B",
+        };
+        _shared = new PollingCounter("gpu-shared-bytes", this, sharedBytes)
+        {
+            DisplayName = "GPU Shared VRAM",
+            DisplayUnits = "B",
+        };
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        _dedicated?.Dispose();
+        _shared?.Dispose();
+        base.Dispose(disposing);
+    }
 }
 #endif
