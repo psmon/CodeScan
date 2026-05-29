@@ -103,11 +103,15 @@ public sealed class ChatView : IAsyncDisposable
             Visible = false,
         };
 
+        // Compact layout — start screen has to fit inside a 24-row terminal
+        // with the Start button visible without scrolling. Every Y below
+        // was tuned so the [Load Model & Start Chat] button lands at Y=21
+        // even with the device radio carrying up to 4 GPU rows.
         _modelList = new ListView
         {
             X = 1, Y = 6,
             Width = Dim.Fill(2),
-            Height = 6,
+            Height = 4,
             Visible = false,
         };
         _modelList.SetSource(_modelListItems);
@@ -116,15 +120,15 @@ public sealed class ChatView : IAsyncDisposable
         _modelPathLabel = new Label
         {
             Text = "Model: (none selected)",
-            X = 1, Y = 12,
+            X = 1, Y = 10,
             Width = Dim.Fill(2),
             Visible = false,
         };
 
         _projectPathLabel = new Label
         {
-            Text = "Project context: (none — file paths will be absolute only)",
-            X = 1, Y = 13,
+            Text = "Project: (none — abs paths only)",
+            X = 1, Y = 11,
             Width = Dim.Fill(2),
             Visible = false,
         };
@@ -135,13 +139,13 @@ public sealed class ChatView : IAsyncDisposable
         _deviceLabel = new Label
         {
             Text = "Device:",
-            X = 1, Y = 15,
+            X = 1, Y = 13,
             Visible = false,
         };
 
         _deviceRadio = new RadioGroup
         {
-            X = 10, Y = 15,
+            X = 10, Y = 13,
             Orientation = Orientation.Vertical,
             RadioLabels = new[] { "CPU" },
             SelectedItem = 0,
@@ -154,35 +158,33 @@ public sealed class ChatView : IAsyncDisposable
         // a model is selected.
         _ctxLabel = new Label
         {
-            Text = "Context:",
-            X = 1, Y = 20,
+            Text = "Ctx:",
+            X = 1, Y = 15,
             Visible = false,
         };
 
         _ctxRadio = new RadioGroup
         {
-            X = 10, Y = 20,
+            X = 6, Y = 15,
             Orientation = Orientation.Horizontal,
             RadioLabels = new[] { "4K", "8K", "16K", "32K" },
             SelectedItem = 1,
             Visible = false,
         };
 
-        // Per-turn response cap. The model still obeys its system-prompt
-        // rules ("plain prose, 4-6 sentences"), but a higher cap lets it
-        // produce multi-paragraph analysis when asked for one.
+        // Per-turn response cap. Labels stay short so this fits on one row.
         _responseLabel = new Label
         {
-            Text = "Response:",
-            X = 1, Y = 22,
+            Text = "Resp:",
+            X = 1, Y = 16,
             Visible = false,
         };
 
         _responseRadio = new RadioGroup
         {
-            X = 11, Y = 22,
+            X = 7, Y = 16,
             Orientation = Orientation.Horizontal,
-            RadioLabels = new[] { "Short (512)", "Medium (1024)", "Long (2048)", "Max (4096)" },
+            RadioLabels = new[] { "Short", "Med", "Long", "Max" },
             SelectedItem = DefaultResponseIndex,
             Visible = false,
         };
@@ -190,24 +192,24 @@ public sealed class ChatView : IAsyncDisposable
         _modelInfoLabel = new Label
         {
             Text = "",
-            X = 1, Y = 24,
+            X = 1, Y = 17,
             Width = Dim.Fill(2),
-            Height = 2,
+            Height = 1,
             Visible = false,
         };
 
         _pickProjectBtn = new Button
         {
-            Text = "[Pick Project Context]",
-            X = 1, Y = 27,
+            Text = "[Pick Project]",
+            X = 1, Y = 19,
             Visible = false,
         };
         _pickProjectBtn.Accepting += (_, _) => PickProject();
 
         _startBtn = new Button
         {
-            Text = ">>> Load Model & Start Chat <<<",
-            X = 26, Y = 27,
+            Text = ">>> Start Chat <<<",
+            X = 18, Y = 19,
             Visible = false,
         };
         _startBtn.Accepting += (_, _) => _ = StartChatAsync();
@@ -215,7 +217,7 @@ public sealed class ChatView : IAsyncDisposable
         _downloadBtn = new Button
         {
             Text = "[Download Default Model (Gemma 4 E4B, ~5GB)]",
-            X = 1, Y = 29,
+            X = 1, Y = 21,
             Visible = false,
         };
         _downloadBtn.Accepting += (_, _) => _ = DownloadDefaultModelAsync();
@@ -455,14 +457,12 @@ public sealed class ChatView : IAsyncDisposable
             _modelListItems.Add("  (no GGUF model found)");
             _modelPaths.Add("");
             _hintLabel.Text =
-                $"No model found. Click the download button below to fetch '{defaultEntry.FileName}'\n" +
-                $"to {ModelLocator.ModelsDir}, or drop a GGUF there manually.";
+                $"No model on disk. Use the download button below, or drop a GGUF into {ModelLocator.ModelsDir}.";
         }
         else
         {
             _hintLabel.Text =
-                "Select a model with Enter; pick a Device and Context; then '>>> Load Model & Start Chat <<<'.\n" +
-                "Recommended ctx is computed from the model's trained max + selected device VRAM.";
+                "Pick model · device · ctx, then click [Start Chat]. Recommended ctx auto-fits the selected device.";
             // Default selection: first available.
             _selectedModelPath = _modelPaths[0];
             _modelPathLabel.Text = $"Model: {_selectedModelPath}";
@@ -488,10 +488,21 @@ public sealed class ChatView : IAsyncDisposable
 
     private void RefreshDevices()
     {
+        // Synchronous path with cache reuse. Earlier rounds tried a
+        // background Task + Application.Invoke pattern to keep first-entry
+        // snappy, but that produced a TUI-corruption side-effect when the
+        // invoke landed before Application had finished the Chat-screen
+        // transition. The cache + a Main-view-time prefetch (see MainView's
+        // constructor) gives us the same "instant on second open" property
+        // without the threading edge cases.
         _devices.Clear();
         try { _devices.AddRange(GpuEnumerator.Enumerate()); }
-        catch { /* enumeration failed — CPU still listed below */ }
+        catch { /* enumeration failed — CPU stays as the lone option */ }
+        PopulateDeviceRadio();
+    }
 
+    private void PopulateDeviceRadio()
+    {
         var labels = new List<string> { "CPU" };
         var defaultIdx = 0;
         for (int i = 0; i < _devices.Count; i++)
@@ -499,7 +510,12 @@ public sealed class ChatView : IAsyncDisposable
             var d = _devices[i];
             var vram = d.VramBytes > 0 ? $"{d.VramBytes / (1024.0 * 1024 * 1024):F1} GB" : "?";
             var marker = d.VulkanIndex < 0 ? " [Vulkan driver missing]" : "";
-            labels.Add($"GPU{Math.Max(d.VulkanIndex, 0)}: {d.Vendor} {Trim(d.Name, 32)} ({vram}){marker}");
+            // Vendor often appears inside the device name already
+            // ("AMD Radeon...", "NVIDIA GeForce...") — don't prepend it twice.
+            var displayName = d.Name.StartsWith(d.Vendor, StringComparison.OrdinalIgnoreCase)
+                ? d.Name
+                : $"{d.Vendor} {d.Name}";
+            labels.Add($"GPU{Math.Max(d.VulkanIndex, 0)}: {Trim(displayName, 36)} ({vram}){marker}");
             // Prefer the first Vulkan-capable discrete device; fall back to
             // any Vulkan-capable device; otherwise stay on CPU.
             if (defaultIdx == 0 && d.VulkanIndex >= 0 && d.IsDiscrete) defaultIdx = i + 1;
@@ -558,9 +574,10 @@ public sealed class ChatView : IAsyncDisposable
         var arch = _modelMeta.Architecture;
         var modelMaxK = rec.ModelMaxCtx / 1024;
         var recK = rec.RecommendedCtx / 1024;
+        // One-line summary — the verbose rationale was nice but cost a row
+        // we can't spare in a 24-row terminal.
         _modelInfoLabel.Text =
-            $"Model: {arch} · max {modelMaxK}K · KV {FormatBytes(rec.PerTokenKvBytes)}/tok\n" +
-            $"Recommended: {recK}K — {rec.Rationale}";
+            $"{arch} · max {modelMaxK}K · KV {FormatBytes(rec.PerTokenKvBytes)}/tok · recommended {recK}K";
     }
 
     private void OnModelPicked(object? sender, ListViewItemEventArgs e)
