@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
-using System.Runtime.Versioning;
 using System.Text.RegularExpressions;
 
 namespace CodeScan.Services.Llm;
@@ -28,31 +27,31 @@ public sealed record GpuDevice(
     string Source);
 
 /// <summary>
-/// Cross-platform GPU discovery. Three probes layered, each contributing
-/// what it knows; results are merged by fuzzy name match so a single physical
-/// GPU only appears once.
+/// Cross-platform GPU discovery. Two probes layered:
 ///
 ///   1) vulkaninfo — authoritative for "what llama.cpp can use" and gives the
-///      real device-local heap size (matters on UMA boxes like Strix Halo where
-///      WMI lies about VRAM).
-///   2) WMI Win32_VideoController — Windows only, catches devices Vulkan
-///      can't see (e.g. NVIDIA dGPU with stale driver / disabled MUX).
-///   3) nvidia-smi — refines NVIDIA VRAM when present.
+///      real device-local heap size (matters on UMA boxes like Strix Halo
+///      where Windows reports ~4 GB of dedicated VRAM but Vulkan sees the
+///      full ~64 GB of unified memory).
+///   2) nvidia-smi — refines NVIDIA VRAM when present.
 ///
-/// Caching: the full probe takes ~1–3 seconds (vulkaninfo full dump,
-/// PowerShell startup, nvidia-smi try-and-fail). Hardware doesn't sprout
-/// new GPUs mid-process, so we cache the first result for the process
-/// lifetime. <see cref="TryGetCached"/> lets callers (e.g. ChatView) check
-/// the cache without paying the probe cost, then kick the slow path onto
-/// a background task.
+/// An earlier WMI Win32_VideoController fallback was removed: its
+/// AdapterRAM is unreliable on UMA hardware, Vulkan-invisible devices can't
+/// be used by llama.cpp's Vulkan backend anyway, and the PowerShell
+/// process spawn cost ~300–500 ms per Chat open. Vulkan + nvidia-smi cover
+/// every device this app can actually offload to.
+///
+/// Caching: a cold probe takes ~1–3 s (vulkaninfo full dump + nvidia-smi
+/// try-and-fail on non-NVIDIA boxes). Hardware doesn't sprout new GPUs
+/// mid-process, so the first result is cached for the process lifetime
+/// via <see cref="Lazy{T}"/>.
 /// </summary>
 public static class GpuEnumerator
 {
     // Lazy<T> with ExecutionAndPublication guarantees the probe runs at
     // most once even when MainView's startup prefetch and ChatView's inline
     // call race each other. The second caller blocks on the first's Task
-    // and gets the same list back — no duplicate vulkaninfo / PowerShell
-    // subprocess work.
+    // and gets the same list back — no duplicate vulkaninfo subprocess work.
     private static readonly Lazy<List<GpuDevice>> CachedProbe =
         new(EnumerateUncached, LazyThreadSafetyMode.ExecutionAndPublication);
 
@@ -82,29 +81,7 @@ public static class GpuEnumerator
         }
         catch { /* probe failure is fine — fall through to other sources */ }
 
-        // ---- 2. WMI (Windows only) -----------------------------------------
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-        {
-            try
-            {
-                foreach (var wmi in WmiProbe.Enumerate())
-                {
-                    // Skip if we already have a Vulkan device with a similar
-                    // name — Vulkan's data is more accurate for our purpose.
-                    if (devices.Any(d => FuzzyMatch(d.Name, wmi.Name))) continue;
-                    devices.Add(new GpuDevice(
-                        VulkanIndex: -1,
-                        Name: wmi.Name,
-                        Vendor: GuessVendor(wmi.Name),
-                        IsDiscrete: GuessDiscrete(wmi.Name),
-                        VramBytes: wmi.AdapterRam,
-                        Source: "wmi"));
-                }
-            }
-            catch { /* skip */ }
-        }
-
-        // ---- 3. nvidia-smi (refines NVIDIA VRAM) ---------------------------
+        // ---- 2. nvidia-smi (refines NVIDIA VRAM) ---------------------------
         try
         {
             foreach (var smi in NvidiaSmiProbe.Enumerate())
@@ -164,28 +141,6 @@ public static class GpuEnumerator
         _ => $"0x{id:X4}",
     };
 
-    private static string GuessVendor(string name)
-    {
-        if (name.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase) ||
-            name.Contains("GeForce", StringComparison.OrdinalIgnoreCase) ||
-            name.Contains("RTX", StringComparison.OrdinalIgnoreCase) ||
-            name.Contains("Quadro", StringComparison.OrdinalIgnoreCase)) return "NVIDIA";
-        if (name.Contains("AMD", StringComparison.OrdinalIgnoreCase) ||
-            name.Contains("Radeon", StringComparison.OrdinalIgnoreCase)) return "AMD";
-        if (name.Contains("Intel", StringComparison.OrdinalIgnoreCase)) return "Intel";
-        return "Unknown";
-    }
-
-    private static bool GuessDiscrete(string name)
-    {
-        // Best-effort label: integrated/iGPU keywords flip to false; anything
-        // else defaults to "discrete" because that's the common case for WMI
-        // devices that bypassed Vulkan.
-        if (name.Contains("Integrated", StringComparison.OrdinalIgnoreCase)) return false;
-        if (name.Contains("UHD ", StringComparison.OrdinalIgnoreCase)) return false;
-        if (name.Contains("Iris", StringComparison.OrdinalIgnoreCase)) return false;
-        return true;
-    }
 }
 
 // ----------------------------------------------------------------------
@@ -344,79 +299,6 @@ internal static class VulkanProbe
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             yield return Path.Combine(Environment.SystemDirectory, "vulkaninfo.exe");
         yield return "vulkaninfo";
-    }
-}
-
-internal sealed record WmiVideo(string Name, long AdapterRam);
-
-/// <summary>
-/// Windows-only GPU enumeration via PowerShell-fronted WMI. The caller in
-/// <see cref="GpuEnumerator.EnumerateUncached"/> runtime-guards every call
-/// site with <see cref="RuntimeInformation.IsOSPlatform(OSPlatform)"/>; the
-/// attribute below tells the Roslyn cross-platform analyzer the same thing
-/// so an accidental future caller on Linux / macOS gets a build warning
-/// instead of a runtime "powershell.exe not found".
-/// </summary>
-[SupportedOSPlatform("windows")]
-internal static class WmiProbe
-{
-    /// <summary>
-    /// Calls PowerShell to dump Win32_VideoController instead of using
-    /// System.Management directly — System.Management's CIM reflection path
-    /// trips AOT trim warnings, and we'd rather pay a 300ms process spawn
-    /// than break Native AOT publication.
-    /// </summary>
-    public static IReadOnlyList<WmiVideo> Enumerate()
-    {
-        var output = RunPwsh(
-            "Get-CimInstance Win32_VideoController | " +
-            "ForEach-Object { '{0}|{1}' -f $_.Name, ($_.AdapterRAM ?? 0) }");
-        if (string.IsNullOrEmpty(output)) return Array.Empty<WmiVideo>();
-
-        var list = new List<WmiVideo>();
-        foreach (var line in output.Split('\n'))
-        {
-            var trimmed = line.Trim();
-            if (string.IsNullOrEmpty(trimmed)) continue;
-            var pipe = trimmed.IndexOf('|');
-            if (pipe < 0) continue;
-            var name = trimmed[..pipe].Trim();
-            var ramText = trimmed[(pipe + 1)..].Trim();
-            if (!long.TryParse(ramText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var ram))
-                ram = 0;
-            if (!string.IsNullOrEmpty(name))
-                list.Add(new WmiVideo(name, ram));
-        }
-        return list;
-    }
-
-    private static string RunPwsh(string command)
-    {
-        foreach (var exe in new[] { "powershell.exe", "pwsh.exe" })
-        {
-            try
-            {
-                var psi = new ProcessStartInfo
-                {
-                    FileName = exe,
-                    Arguments = $"-NoProfile -NonInteractive -Command \"{command.Replace("\"", "\\\"")}\"",
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                };
-                using var p = Process.Start(psi);
-                if (p is null) continue;
-                var sb = new System.Text.StringBuilder();
-                p.OutputDataReceived += (_, e) => { if (e.Data != null) sb.AppendLine(e.Data); };
-                p.BeginOutputReadLine();
-                if (!p.WaitForExit(5000)) { try { p.Kill(); } catch { } continue; }
-                var output = sb.ToString();
-                if (!string.IsNullOrWhiteSpace(output)) return output;
-            }
-            catch { /* try next */ }
-        }
-        return string.Empty;
     }
 }
 
