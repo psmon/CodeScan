@@ -8,7 +8,12 @@
 ## Install
 
 ```bash
+# Windows / macOS / nvm-managed Node (no sudo needed)
 npm install -g @webnori/codescan-cli
+
+# Linux with system Node (apt/dnf/.pkg) — root-owned npm prefix
+sudo npm install -g @webnori/codescan-cli
+
 codescan --help
 ```
 
@@ -18,6 +23,13 @@ codescan --help
 > and has nothing to do with CodeScan. Always install the scoped name
 > `@webnori/codescan-cli`. If you previously installed the wrong one, remove
 > it with `npm uninstall -g codescan-cli`.
+
+> **Why `sudo` on Linux?** System-Node distros put npm's global prefix at
+> `/usr/local/lib/node_modules/` (root-owned), so a non-root `npm install -g`
+> fails with `EACCES` before postinstall can run. `sudo` is the simplest
+> answer; if you'd rather not, use **nvm/fnm** to put Node in your home dir,
+> or skip npm entirely with `Script/install.sh` (installs to `~/.local/bin/`).
+> Either way, `~/.codescan/{db,logs,config}` user data is never touched.
 
 ## Supported platforms (v1)
 

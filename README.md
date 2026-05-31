@@ -89,7 +89,7 @@ There are environments where Claude or Codex simply isn't available — air-gapp
 |----|--------------|-----------------|-------------|
 | **Windows** | x64 | `winget install psmon.CodeScan` | `npm install -g @webnori/codescan-cli` (if Node is already installed) |
 | **macOS** | arm64 (Apple Silicon) | `brew install psmon/codescan/codescan` | — |
-| **Linux** | x64 / arm64 | `npm install -g @webnori/codescan-cli` | — |
+| **Linux** | x64 / arm64 | `sudo npm install -g @webnori/codescan-cli` | — |
 
 > **⚠ Important: install the scoped name `@webnori/codescan-cli`.**
 > An unrelated third party squatted the bare `codescan-cli` name on npm
@@ -97,6 +97,8 @@ There are environments where Claude or Codex simply isn't available — air-gapp
 > crashes on `codescan` launch) and has nothing to do with CodeScan.
 > If you installed it by mistake, run `npm uninstall -g codescan-cli`
 > first, then install `@webnori/codescan-cli` above.
+
+> **Why `sudo` on Linux?** System-Node distros root-own npm's global prefix (`/usr/local/lib/node_modules/`), so non-root `npm install -g` fails with `EACCES`. If you prefer not to use sudo: switch to **nvm/fnm**-managed Node, or use the [direct installer](#direct-installer-fallback) below (no npm, no sudo).
 
 After install, verify:
 

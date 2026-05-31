@@ -67,7 +67,7 @@ CodeScan의 지식, 아키텍처, 간편 설치, 배포 운영 같은 기술 주
 | 플랫폼 | 채널 | 사용자 설치 경험 | 역할 |
 |--------|------|------------------|------|
 | Windows | winget | `winget install psmon.CodeScan` | 공식 Windows 설치 경로 |
-| Linux 계열 | npm | `npm install -g @webnori/codescan-cli` | 배포 진입점 및 바이너리 설치 래퍼 |
+| Linux 계열 | npm | `sudo npm install -g @webnori/codescan-cli` | 배포 진입점 및 바이너리 설치 래퍼 |
 | macOS | Homebrew | `brew install psmon/codescan/codescan` | 공식 macOS 설치 경로 (tap 운영) |
 
 ## 공통 배포 원칙
@@ -216,11 +216,13 @@ Installers:
 ### 설치 경험
 
 ```bash
-npm install -g @webnori/codescan-cli
+sudo npm install -g @webnori/codescan-cli
 codescan --version
 ```
 
 > 반드시 스코프 붙은 `@webnori/codescan-cli`로 설치한다. 짧은 `codescan-cli`는 무관한 제3자가 npm에 선점한 상태이며 설치 즉시 죽는 깨진 패키지이므로 절대 사용하지 않는다.
+
+> 시스템 Node(`apt`/`dnf`/`.pkg`) 기준 `sudo`가 필요하다. nvm/fnm으로 Node를 사용자 홈에 둔 환경이면 `sudo` 생략 가능. sudo 없이 가고 싶다면 `Script/install.sh` 경로 사용.
 
 ### 패키징 방향
 
@@ -277,6 +279,17 @@ codescan-cli/
 | glibc/musl | glibc만 지원 (musl/Alpine 사용자는 직접 빌드 안내) |
 | 아키텍처 | linux-x64, linux-arm64 |
 | 제거 시 정리 | preuninstall에서 vendor/ 삭제, `~/.codescan/`은 보존 |
+| 권한 모델 | Linux는 `sudo npm install -g`로 안내 — 시스템 Node의 글로벌 prefix가 root 소유라 일반 사용자 설치는 npm 단계에서 EACCES로 실패함. nvm/fnm 사용자나 직접 인스톨러(`Script/install.sh`) 사용자는 sudo 불필요. |
+
+### 권한 정책 (Linux)
+
+시스템 패키지 매니저로 설치된 Node(`apt`, `dnf`, macOS `.pkg`)는 글로벌 prefix가 root 소유(`/usr/local/lib/node_modules/`)다. 이 상태에서 일반 사용자의 `npm install -g`는 **postinstall이 실행되기 전 npm 단계에서** `EACCES`로 실패하므로 패키지 측 코드로는 해결 불가능하다.
+
+v1 정책: **README의 Linux 명령은 `sudo npm install -g @webnori/codescan-cli`로 통일.** 사용자가 sudo를 피하고 싶다면 다음 두 우회로가 있으나 별도 안내:
+- nvm/fnm/volta로 Node를 사용자 홈에 둔 경우 — sudo 없이 `npm install -g`만으로 동작
+- `Script/install.sh` 직접 인스톨러 — npm을 거치지 않고 `~/.local/bin/codescan`에 설치
+
+어느 경로든 최종 바이너리와 GitHub Release asset은 동일하며, 사용자 데이터(`~/.codescan/`)는 영향받지 않는다.
 
 ### 장점
 

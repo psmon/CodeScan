@@ -87,10 +87,12 @@ Documented in
 | OS | Command |
 |----|---------|
 | Windows | `winget install psmon.CodeScan` |
-| Linux   | `npm install -g @webnori/codescan-cli` |
+| Linux   | `sudo npm install -g @webnori/codescan-cli` |
 | macOS   | `brew install psmon/codescan/codescan` |
 
 > The npm package is published under the scoped name `@webnori/codescan-cli`. The bare `codescan-cli` name on npm belongs to an unrelated third party (squat, broken on launch) — do not use it.
+
+> Linux `sudo` is needed because system-Node's global npm prefix (`/usr/local/lib/node_modules/`) is root-owned. nvm/fnm-managed Node or `Script/install.sh` are sudo-free alternatives.
 
 Direct script installers (no package manager) are at:
 
