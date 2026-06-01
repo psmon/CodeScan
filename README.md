@@ -83,40 +83,99 @@ There are environments where Claude or Codex simply isn't available — air-gapp
 
 <p align="center"><sub>One release pipeline → four native binaries → three package channels. <a href="https://github.com/psmon/CodeScan/actions/workflows/release.yml">GitHub Actions release.yml</a></sub></p>
 
-### Easy Install — one line per OS
+### ⚡ Quick install — one line, every OS
 
-| OS | Architecture | Primary command | Alternative |
-|----|--------------|-----------------|-------------|
-| **Windows** | x64 | `winget install psmon.CodeScan` | `npm install -g @webnori/codescan-cli` (if Node is already installed) |
-| **macOS** | arm64 (Apple Silicon) | `brew install psmon/codescan/codescan` | — |
-| **Linux** | x64 / arm64 | `sudo npm install -g @webnori/codescan-cli` | — |
-
-> **⚠ Important: install the scoped name `@webnori/codescan-cli`.**
-> An unrelated third party squatted the bare `codescan-cli` name on npm
-> before we published. That package is broken (its own ESM/CJS mismatch
-> crashes on `codescan` launch) and has nothing to do with CodeScan.
-> If you installed it by mistake, run `npm uninstall -g codescan-cli`
-> first, then install `@webnori/codescan-cli` above.
-
-> **Why `sudo` on Linux?** System-Node distros root-own npm's global prefix (`/usr/local/lib/node_modules/`), so non-root `npm install -g` fails with `EACCES`. If you prefer not to use sudo: switch to **nvm/fnm**-managed Node, or use the [direct installer](#direct-installer-fallback) below (no npm, no sudo).
-
-After install, verify:
+CodeScan installs with **npm**, which works identically on **Windows, macOS, and Linux**. If you have [Node.js](https://nodejs.org/), you're one command away:
 
 ```bash
-codescan --version   # should print: codescan v0.5.0 (or newer)
-codescan --help
+npm install -g @webnori/codescan-cli
 ```
 
-> **Channel status (v1)**
-> The GitHub Release pipeline is live and produces the binaries every channel pulls from.
-> · **Homebrew tap** — live at [`psmon/homebrew-codescan`](https://github.com/psmon/homebrew-codescan). `brew tap psmon/codescan && brew install codescan` works today on Apple Silicon Macs.
-> · **winget** — manifest at [`packaging/winget/manifests/p/psmon/CodeScan/`](packaging/winget/manifests/p/psmon/CodeScan/), pending PR to `microsoft/winget-pkgs`. Until merged, test locally — see [Testing winget locally on Windows](#testing-winget-locally-on-windows) below.
-> · **npm (`@webnori/codescan-cli`)** — package at [`packaging/npm/codescan-cli/`](packaging/npm/codescan-cli/), pending publish to npm registry. The bare `codescan-cli` name is held by an unrelated third party — always use the scoped name above.
-> Until each channel goes live, the [direct installers](#direct-installer-fallback) below work today.
+On **Linux / macOS**, system Node root-owns npm's global folder, so add `sudo`:
 
-#### Testing winget locally on Windows
+```bash
+sudo npm install -g @webnori/codescan-cli
+```
 
-The winget manifest is generated for every release. To install from a local manifest file (before the PR to `microsoft/winget-pkgs` is merged), winget requires a one-time opt-in. **Run once in an elevated PowerShell**:
+Then verify and scan your first project:
+
+```bash
+codescan --version              # codescan v0.8.0 (or newer)
+codescan scan /path/to/project  # index a codebase
+codescan tui                    # interactive terminal UI
+```
+
+That's all most users need. The npm package is a thin wrapper — its `postinstall` step downloads the matching native binary (`win-x64`, `linux-x64`, `linux-arm64`, `osx-arm64`) from GitHub Releases. **No .NET runtime required.**
+
+> **Use the scoped name `@webnori/codescan-cli`** (with the `@webnori/` prefix). The bare `codescan-cli` is an unrelated, broken squatted package — see [Install troubleshooting](#install-troubleshooting) if you hit issues.
+
+<details>
+<summary><b>No Node.js? Prefer a native package manager?</b> &nbsp;— winget · Homebrew · direct installer · build from source</summary>
+
+<br>
+
+**Windows — winget** (no Node.js needed, PATH handled automatically):
+
+```powershell
+winget install psmon.CodeScan
+```
+
+**macOS — Homebrew** (Apple Silicon / arm64):
+
+```bash
+brew install psmon/codescan/codescan
+```
+
+**Any OS — direct installer** (no package manager, pin a specific release):
+
+```powershell
+# Windows (PowerShell)
+iwr https://raw.githubusercontent.com/psmon/CodeScan/main/Script/install-win.ps1 -OutFile install-win.ps1
+.\install-win.ps1                       # latest
+.\install-win.ps1 -Version 0.8.0        # pinned
+```
+
+```bash
+# Linux / macOS (bash)
+curl -fsSL https://raw.githubusercontent.com/psmon/CodeScan/main/Script/install.sh -o install.sh
+sh install.sh                           # latest
+sh install.sh --version 0.8.0           # pinned
+```
+
+The direct installers download the matching release asset from GitHub, verify SHA256 against `checksums.txt`, install to a user-local path (Win: `~/.codescan/bin`, Unix: `~/.local/bin`), and **never touch user data** under `~/.codescan/{db,logs,config}`.
+
+**Build from source** — see [Build from source](#build-from-source) below.
+
+</details>
+
+### Install troubleshooting
+
+<details>
+<summary><b>Common install issues & channel notes</b> &nbsp;— npm name, sudo/EACCES, offline/proxy, Linux arch, winget local test, channel status</summary>
+
+<br>
+
+**⚠ Install the scoped name `@webnori/codescan-cli`.** An unrelated third party squatted the bare `codescan-cli` name on npm before we published. That package is broken (its own ESM/CJS mismatch crashes on `codescan` launch) and has nothing to do with CodeScan. If you installed it by mistake:
+
+```bash
+npm uninstall -g codescan-cli
+npm install -g @webnori/codescan-cli
+```
+
+**`EACCES` / permission errors on Linux without sudo.** System-Node distros root-own npm's global prefix (`/usr/local/lib/node_modules/`), so non-root `npm install -g` fails. Either prefix with `sudo`, switch to **nvm/fnm**-managed Node (no sudo needed), or use the direct installer above.
+
+**Offline / corporate proxy / air-gapped.** If `postinstall` cannot reach GitHub, set `CODESCAN_SKIP_DOWNLOAD=1` during install and grab the binary manually from the [latest release](https://github.com/psmon/CodeScan/releases/latest).
+
+**Linux: x64 vs arm64.** The npm wrapper auto-detects your CPU architecture:
+
+| `process.arch` | Asset downloaded |
+|----------------|------------------|
+| `x64` | `codescan-linux-x64.tar.gz` |
+| `arm64` | `codescan-linux-arm64.tar.gz` |
+
+v1 ships **glibc-based Linux only**. musl/Alpine support is a v2 candidate.
+
+**Testing winget locally on Windows** (before the PR to `microsoft/winget-pkgs` merges). Run once in an elevated PowerShell to opt in to local manifests:
 
 ```powershell
 winget settings --enable LocalManifestFiles
@@ -125,53 +184,20 @@ winget settings --enable LocalManifestFiles
 Then install from the in-repo manifest (no admin needed after the opt-in):
 
 ```powershell
-# from a fresh clone of this repo
-winget install --manifest packaging\winget\manifests\p\psmon\CodeScan\0.5.0
+winget install --manifest packaging\winget\manifests\p\psmon\CodeScan\0.8.0
 codescan --version
 ```
 
-This is winget's built-in safety guard against arbitrary-yaml installs — once enabled, you can install / validate any local manifest. To disable later: `winget settings --disable LocalManifestFiles` (elevated).
+Disable later with `winget settings --disable LocalManifestFiles` (elevated).
 
-#### Why each channel?
+**Channel status (v1).** The GitHub Release pipeline is live and produces the binaries every channel pulls from.
+- **npm (`@webnori/codescan-cli`)** — package at [`packaging/npm/codescan-cli/`](packaging/npm/codescan-cli/). Always use the scoped name; the bare `codescan-cli` is squatted by an unrelated third party.
+- **Homebrew tap** — live at [`psmon/homebrew-codescan`](https://github.com/psmon/homebrew-codescan). `brew tap psmon/codescan && brew install codescan` works today on Apple Silicon Macs.
+- **winget** — manifest at [`packaging/winget/manifests/p/psmon/CodeScan/`](packaging/winget/manifests/p/psmon/CodeScan/), pending PR to `microsoft/winget-pkgs`. Until merged, test locally as shown above.
 
-- **winget (Windows)** — Microsoft's native Windows package manager. Portable install, no admin needed, PATH handled automatically.
-- **Homebrew (macOS)** — De-facto package manager for macOS developers. v1 ships **arm64 only** (Apple Silicon); Intel Mac users should build from source or use Rosetta with the arm64 build. Intel Mac shipping is a v2 candidate.
-- **npm (Linux + Windows alternative)** — Picked over apt/dnf/snap because npm is universally available across Linux distros and the CodeScan release pipeline can serve **all four binaries** (`linux-x64`, `linux-arm64`, `osx-arm64`, `win-x64`) from a single wrapper package. The npm package is a thin postinstall wrapper that downloads the right native binary from GitHub Releases. On Windows, `winget` stays the recommended path (no Node.js required), but `npm install -g @webnori/codescan-cli` also works if you already have Node and want toolchain consistency. **Use the scoped name `@webnori/codescan-cli`** — the bare `codescan-cli` name is squatted by an unrelated, broken third-party package. **Linux arm64 is a deliberate first-class target** — see [Why AOT? — Edge AI trend and the value of a single binary](#why-aot--edge-ai-trend-and-the-value-of-a-single-binary) at the bottom of this README for why arm64 SBC (Raspberry Pi / Jetson / Latte Panda) deployment is a key forward-looking scenario for this tool.
+**Why these channels?** npm is universally available across all OSes and serves all four binaries (`linux-x64`, `linux-arm64`, `osx-arm64`, `win-x64`) from a single wrapper — hence the primary path. winget gives Windows users a Node-free option; Homebrew is the macOS default (arm64 only in v1; Intel Macs build from source or use Rosetta). **Linux arm64 is a deliberate first-class target** — see [Why AOT? — Edge AI trend](#why-aot--edge-ai-trend-and-the-value-of-a-single-binary) for why arm64 SBC (Raspberry Pi / Jetson / Latte Panda) deployment matters.
 
-### Linux: x64 vs arm64
-
-The npm wrapper auto-detects your CPU architecture and downloads the matching tarball:
-
-| `process.arch` | Asset downloaded |
-|----------------|------------------|
-| `x64` | `codescan-linux-x64.tar.gz` |
-| `arm64` | `codescan-linux-arm64.tar.gz` |
-
-If `postinstall` cannot reach GitHub (corporate proxy, air-gapped), set `CODESCAN_SKIP_DOWNLOAD=1` during install and grab the binary manually from the [latest release](https://github.com/psmon/CodeScan/releases/latest).
-
-v1 ships **glibc-based Linux only**. musl/Alpine support is a v2 candidate.
-
-### Direct installer (fallback)
-
-For environments without a package manager — or when you want to pin to a specific release.
-
-**Windows (PowerShell):**
-
-```powershell
-iwr https://raw.githubusercontent.com/psmon/CodeScan/main/Script/install-win.ps1 -OutFile install-win.ps1
-.\install-win.ps1                       # latest
-.\install-win.ps1 -Version 0.5.0        # pinned
-```
-
-**Linux / macOS (bash):**
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/psmon/CodeScan/main/Script/install.sh -o install.sh
-sh install.sh                           # latest
-sh install.sh --version 0.5.0           # pinned
-```
-
-Both installers download the matching release asset from GitHub, verify SHA256 against `checksums.txt`, install to a user-local path (Win: `~/.codescan/bin`, Unix: `~/.local/bin`), and **never touch user data** under `~/.codescan/{db,logs,config}`.
+</details>
 
 ### User data location
 
