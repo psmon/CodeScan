@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Runtime.InteropServices;
 using Terminal.Gui;
 using CodeScan.Services;
+using CodeScan.Services.Diagnostics;
 
 namespace CodeScan.Tui;
 
@@ -45,6 +46,8 @@ public class TuiApp
     {
         try
         {
+            StartupTracer.Mark("Run() entry");
+
             // Force UTF-8 encoding for Korean/CJK support
             Console.OutputEncoding = System.Text.Encoding.UTF8;
             Console.InputEncoding = System.Text.Encoding.UTF8;
@@ -53,14 +56,17 @@ public class TuiApp
                 SetConsoleOutputCP(65001); // UTF-8
                 SetConsoleCP(65001);
             }
+            StartupTracer.Mark("UTF-8 console set");
 
             DisableConsoleMouse();
             Application.ForceDriver = "NetDriver";
             Application.Init();
+            StartupTracer.Mark("Application.Init done");
             Application.IsMouseDisabled = true;
             DisableConsoleMouse();
 
             var main = new MainView();
+            StartupTracer.Mark("MainView ctor done");
             Application.Run(main);
             main.Dispose();
             Application.Shutdown();
@@ -366,7 +372,9 @@ public class MainView : Toplevel
         // Application-level key intercept - fires BEFORE any view processes keys
         Application.KeyDown += OnGlobalKeyDown;
 
+        StartupTracer.Mark("MainView children added");
         ShowRootSelect();
+        StartupTracer.Mark("First ShowRootSelect complete");
     }
 
     private static bool IsQKey(Key key)
@@ -478,7 +486,7 @@ public class MainView : Toplevel
     private void ShowChat()
     {
         _mode = Mode.Chat;
-        _titleLabel.Text = "Chat (Gemma 4 on-device — CPU)";
+        _titleLabel.Text = "Chat — on-device LLM (Gemma 4 / Nemotron 3 Nano)";
         _pathLabel.Text = "Loaded model stays in RAM until you exit Chat";
         _hintLabel.Text = "[Q] Back / End chat  [H] Home";
 
@@ -1380,11 +1388,16 @@ public class MainView : Toplevel
 
         if (OperatingSystem.IsWindows())
         {
-            foreach (var drive in DriveInfo.GetDrives().Where(d => d.IsReady))
+            // DriveInfo.IsReady / VolumeLabel / TotalSize each hit the disk
+            // synchronously. A flaky USB stick, a stale network mount, or a
+            // disconnected VPN share can stall any of these for multiple
+            // seconds — the cumulative effect was the "어느순간 늦게뜸" the
+            // user reported. We probe each drive with a short bounded
+            // timeout and fall back to a label-only entry if it stalls.
+            foreach (var drive in SafeGetDrives())
             {
-                var vol = string.IsNullOrEmpty(drive.VolumeLabel) ? "Local Disk" : drive.VolumeLabel;
-                _listItems.Add($"  {drive.Name}  ({vol}, {FormatSize(drive.TotalSize)})");
-                _dirEntries.Add(drive.RootDirectory.FullName);
+                _listItems.Add(drive.Label);
+                _dirEntries.Add(drive.Path);
             }
         }
         else
@@ -1405,7 +1418,7 @@ public class MainView : Toplevel
         _dirEntries.Add("__SEARCH__");
         _listItems.Add("  [Projects] View indexed projects");
         _dirEntries.Add("__PROJECTS__");
-        _listItems.Add("  [Chat] On-device LLM (Gemma 4, CPU)");
+        _listItems.Add("  [Chat] On-device LLM (Gemma 4 / Nemotron 3 Nano)");
         _dirEntries.Add("__CHAT__");
         _listItems.Add("  ----------------");
         _dirEntries.Add("__SEP__");
@@ -1542,4 +1555,79 @@ public class MainView : Toplevel
         < 1024L * 1024 * 1024 => $"{bytes / (1024.0 * 1024.0):F1} MB",
         _ => $"{bytes / (1024.0 * 1024.0 * 1024.0):F1} GB"
     };
+
+    // Cached drive probe with a per-drive timeout. Probing happens once
+    // per process — subsequent ShowRootSelect calls reuse the snapshot, so
+    // bouncing in/out of the menu never re-hits a slow drive. ResetCache
+    // is here for the day someone wants a manual refresh button.
+    private static List<DriveEntry>? _driveCache;
+    private static readonly object DriveCacheLock = new();
+
+    private static List<DriveEntry> SafeGetDrives()
+    {
+        if (_driveCache != null) return _driveCache;
+        lock (DriveCacheLock)
+        {
+            if (_driveCache != null) return _driveCache;
+            var t0 = System.Diagnostics.Stopwatch.StartNew();
+            DriveInfo[] drives;
+            try { drives = DriveInfo.GetDrives(); }
+            catch { drives = Array.Empty<DriveInfo>(); }
+
+            var list = new List<DriveEntry>(drives.Length);
+            foreach (var d in drives)
+            {
+                var entry = ProbeDrive(d);
+                if (entry != null) list.Add(entry);
+            }
+            t0.Stop();
+            StartupTracer.Mark($"SafeGetDrives: {list.Count} drives in {t0.ElapsedMilliseconds} ms");
+            _driveCache = list;
+            return list;
+        }
+    }
+
+    // Bound every per-drive metadata probe to 400 ms. Each accessor runs
+    // on a worker thread so a hung CD-ROM or stale network share doesn't
+    // freeze the main thread. The fallback label still gets the drive
+    // letter (we want the user to still see C:\, D:\ etc. even when D: is
+    // a flaky USB).
+    private const int DriveProbeTimeoutMs = 400;
+
+    private static DriveEntry? ProbeDrive(DriveInfo d)
+    {
+        string? letter;
+        try { letter = d.Name; }
+        catch { return null; }
+        if (string.IsNullOrEmpty(letter)) return null;
+
+        var ready = ProbeWithTimeout(() => d.IsReady, false);
+        if (!ready) return null;
+
+        var vol = ProbeWithTimeout<string>(() =>
+        {
+            var v = d.VolumeLabel;
+            return string.IsNullOrEmpty(v) ? "Local Disk" : v;
+        }, "(slow)");
+
+        var sizeText = ProbeWithTimeout(() => FormatSize(d.TotalSize), "?");
+        var rootPath = ProbeWithTimeout(() => d.RootDirectory.FullName, letter);
+
+        return new DriveEntry($"  {letter}  ({vol}, {sizeText})", rootPath);
+    }
+
+    private static T ProbeWithTimeout<T>(Func<T> probe, T fallback)
+    {
+        try
+        {
+            var task = Task.Run(probe);
+            return task.Wait(DriveProbeTimeoutMs) ? task.Result : fallback;
+        }
+        catch
+        {
+            return fallback;
+        }
+    }
+
+    private sealed record DriveEntry(string Label, string Path);
 }

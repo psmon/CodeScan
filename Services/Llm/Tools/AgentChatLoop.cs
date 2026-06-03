@@ -48,6 +48,7 @@ public sealed class AgentChatLoop : IAsyncDisposable
     private readonly CodeScanToolbelt _toolbelt;
     private readonly StatelessExecutor _executor;
     private readonly Grammar _grammar;
+    private readonly IChatTemplate _template;
     private readonly int _maxIterations;
     private readonly int _maxTokensPerTurn;
     private readonly float _temperature;
@@ -56,8 +57,8 @@ public sealed class AgentChatLoop : IAsyncDisposable
     private readonly int _progressTokenInterval;
 
     // Conversation history. Every committed user / tool_result / model
-    // turn lands here in order; the next prompt is BuildPrompt(history).
-    private readonly List<GemmaChatTemplate.HistoryEntry> _history = new();
+    // turn lands here in order; the next prompt is template.BuildPrompt(history).
+    private readonly List<ChatHistoryEntry> _history = new();
 
     private bool _disposed;
 
@@ -71,6 +72,7 @@ public sealed class AgentChatLoop : IAsyncDisposable
         CodeScanToolbelt toolbelt,
         string? projectRoot = null,
         ChatSessionLogger? logger = null,
+        IChatTemplate? template = null,
         int maxIterations = 6,
         int maxTokensPerTurn = 512,
         float temperature = 0.0f,
@@ -79,6 +81,10 @@ public sealed class AgentChatLoop : IAsyncDisposable
         _host = host;
         _toolbelt = toolbelt;
         _logger = logger;
+        // Default to Gemma so existing call sites (incl. the smoke test)
+        // keep their pre-Nemotron behaviour. ChatView resolves the right
+        // template via ChatTemplateRegistry and passes it in explicitly.
+        _template = template ?? GemmaChatTemplate.Instance;
         _maxIterations = maxIterations;
         _maxTokensPerTurn = maxTokensPerTurn;
         _temperature = temperature;
@@ -105,8 +111,7 @@ public sealed class AgentChatLoop : IAsyncDisposable
 
         // Commit the new user message to history once at the start of this
         // exchange; iter>0 turns push tool results, not new user messages.
-        _history.Add(new GemmaChatTemplate.HistoryEntry(
-            GemmaChatTemplate.HistoryRole.User, userMessage));
+        _history.Add(new ChatHistoryEntry(ChatHistoryRole.User, userMessage));
 
         for (var iter = 0; iter < _maxIterations; iter++)
         {
@@ -116,8 +121,8 @@ public sealed class AgentChatLoop : IAsyncDisposable
             // The stateless executor doesn't carry KV cache across calls
             // (it re-prefills) so prior model turns must be explicit. This
             // is what fixes the iter=1 empty-raw — every turn boundary is
-            // now closed with <turn|>, no anti-prompt stripping artifacts.
-            var turnInput = GemmaChatTemplate.BuildPrompt(_systemPrompt, _history);
+            // now closed by the template, no anti-prompt stripping artifacts.
+            var turnInput = _template.BuildPrompt(_systemPrompt, _history);
 
             yield return new ChatTurnUpdate("thinking", iter == 0 ? "Reading the question…" : "Reasoning…");
 
@@ -203,8 +208,7 @@ public sealed class AgentChatLoop : IAsyncDisposable
             // Commit THIS model turn to history before we either return
             // (done) or feed back a tool result — keeps the next prompt's
             // model turns closed correctly.
-            _history.Add(new GemmaChatTemplate.HistoryEntry(
-                GemmaChatTemplate.HistoryRole.Model, rawJson!));
+            _history.Add(new ChatHistoryEntry(ChatHistoryRole.Model, rawJson!));
 
             if (c.Tool == CodeScanToolGrammar.DoneToolName)
             {
@@ -224,8 +228,7 @@ public sealed class AgentChatLoop : IAsyncDisposable
 
             // Push the tool result into history so the next iteration's
             // BuildPrompt picks it up as a user-role turn.
-            _history.Add(new GemmaChatTemplate.HistoryEntry(
-                GemmaChatTemplate.HistoryRole.ToolResult, toolResult, c.Tool));
+            _history.Add(new ChatHistoryEntry(ChatHistoryRole.ToolResult, toolResult, c.Tool));
 
             _logger?.Write("result", toolResult);
             yield return new ChatTurnUpdate("tool_result", Truncate(toolResult, 600));
@@ -246,7 +249,7 @@ public sealed class AgentChatLoop : IAsyncDisposable
         var inferenceParams = new InferenceParams
         {
             MaxTokens = _maxTokensPerTurn,
-            AntiPrompts = GemmaChatTemplate.AntiPrompts,
+            AntiPrompts = _template.AntiPrompts,
             SamplingPipeline = new DefaultSamplingPipeline
             {
                 Temperature = _temperature,
@@ -273,12 +276,12 @@ public sealed class AgentChatLoop : IAsyncDisposable
             channel?.Writer.TryComplete();
         }
 
-        return StripTrailingAntiPrompt(sb.ToString()).Trim();
+        return StripTrailingAntiPrompt(sb.ToString(), _template.AntiPrompts).Trim();
     }
 
-    private static string StripTrailingAntiPrompt(string text)
+    private static string StripTrailingAntiPrompt(string text, IReadOnlyList<string> antiPrompts)
     {
-        foreach (var anti in GemmaChatTemplate.AntiPrompts)
+        foreach (var anti in antiPrompts)
         {
             for (var len = anti.Length; len > 0; len--)
                 if (text.EndsWith(anti[..len], StringComparison.Ordinal))

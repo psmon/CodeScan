@@ -20,11 +20,17 @@ namespace CodeScan.Services.Llm.Tools;
 /// reads JSON; switching is a follow-up) but the surrounding turn
 /// markers MUST be correct or the model loses its place.
 /// </summary>
-public static class GemmaChatTemplate
+public sealed class GemmaChatTemplate : IChatTemplate
 {
+    public static readonly GemmaChatTemplate Instance = new();
+
+    public string Name => "Gemma 4";
+
     // EOS token = id 106, surfaced as the literal string "<turn|>" by the
     // tokenizer. We also list "<eos>" (id 1, marked EOG) as a safety net.
-    public static readonly string[] AntiPrompts = new[] { "<turn|>", "<eos>" };
+    public static readonly string[] AntiPromptStrings = new[] { "<turn|>", "<eos>" };
+
+    public IReadOnlyList<string> AntiPrompts => AntiPromptStrings;
 
     /// <summary>
     /// First turn of a session: emit the system prompt as its own turn,
@@ -66,16 +72,6 @@ public static class GemmaChatTemplate
         $"<|turn>model\n";
 
     /// <summary>
-    /// One row in the running chat history. Used by the stateless loop to
-    /// rebuild the full prompt every turn. We capture model JSON outputs
-    /// verbatim so the model sees its own prior decisions when planning
-    /// the next move.
-    /// </summary>
-    public enum HistoryRole { User, Model, ToolResult }
-
-    public sealed record HistoryEntry(HistoryRole Role, string Content, string? ToolName = null);
-
-    /// <summary>
     /// Builds the full prompt for a stateless executor pass. Format:
     ///   &lt;|turn&gt;system\n{system}&lt;turn|&gt;\n
     ///   &lt;|turn&gt;user\n{user1}&lt;turn|&gt;\n
@@ -90,7 +86,7 @@ public static class GemmaChatTemplate
     /// empty-raw seen with InteractiveExecutor: anti-prompt stripped the
     /// closing token from KV cache, leaving the prior turn "unfinished").
     /// </summary>
-    public static string BuildPrompt(string systemPrompt, IReadOnlyList<HistoryEntry> history)
+    public string BuildPrompt(string systemPrompt, IReadOnlyList<ChatHistoryEntry> history)
     {
         var sb = new System.Text.StringBuilder();
         sb.Append("<|turn>system\n").Append(systemPrompt).Append("<turn|>\n");
@@ -98,16 +94,16 @@ public static class GemmaChatTemplate
         {
             switch (entry.Role)
             {
-                case HistoryRole.User:
+                case ChatHistoryRole.User:
                     sb.Append("<|turn>user\n").Append(entry.Content).Append("<turn|>\n");
                     break;
-                case HistoryRole.ToolResult:
+                case ChatHistoryRole.ToolResult:
                     sb.Append("<|turn>user\n")
                       .Append("Tool result for `").Append(entry.ToolName ?? "(unknown)").Append("`:\n")
                       .Append(entry.Content)
                       .Append("<turn|>\n");
                     break;
-                case HistoryRole.Model:
+                case ChatHistoryRole.Model:
                     sb.Append("<|turn>model\n").Append(entry.Content).Append("<turn|>\n");
                     break;
             }

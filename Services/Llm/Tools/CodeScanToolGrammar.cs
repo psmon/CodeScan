@@ -86,6 +86,19 @@ CRITICAL OPERATING RULES:
   - Call `done` early. 1–3 tool turns is normal for code lookup; the user
     wants an answer, not a long chain of tool calls.
 
+PATH COPY RULE (STRICT — most common failure mode):
+  - When `read_file` / `grep_file` needs a path, copy the `abs_path` field
+    of a prior `db_search` hit BYTE-FOR-BYTE. Do NOT edit, shorten, drop
+    folders, change slashes, or "guess" a shorter path.
+  - WRONG: db_search returns abs_path "C:\proj\AgentZeroWpf\Foo.ps1",
+           you then call read_file with "C:\proj\Foo.ps1". → not found.
+  - RIGHT: db_search returns abs_path "C:\proj\AgentZeroWpf\Foo.ps1",
+           you then call read_file path="C:\proj\AgentZeroWpf\Foo.ps1".
+  - If you don't yet have a db_search hit for the file you want to read,
+    call db_search FIRST and wait for its abs_path.
+  - If a file-not-found error suggests "Did you mean: <path>", copy that
+    suggested path verbatim into the next call.
+
 SEARCH STRATEGY — how to pick a good db_search query:
   - The index is FTS5 with a TRIGRAM tokenizer. Boolean keywords like
     "OR" / "AND" are treated as literal terms and will return 0 hits.

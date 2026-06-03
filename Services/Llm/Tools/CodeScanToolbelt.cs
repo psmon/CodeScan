@@ -452,17 +452,69 @@ public sealed class CodeScanToolbelt
     // of just stating the failure. Without this Gemma typically gives up with
     // a "sorry, file not found" `done` instead of re-issuing with an absolute
     // path — which the same DB lookup would have produced on the very next turn.
+    //
+    // We also do a basename lookup in the index — when the model passes a
+    // path like ".../Project/Foo.ps1" but the actual file lives at
+    // ".../Project/SubDir/Foo.ps1", surfacing the correct abs_path as a
+    // "Did you mean" hint lets the next turn just copy-paste it. This is
+    // the recovery path Nemotron 3 Nano 4B kept hitting in the
+    // chat-20260603 log — it would db_search successfully but then
+    // hallucinate a shortened abs_path on the follow-up read_file.
     private string BuildPathError(string tool, string rawPath)
     {
+        var suggestions = SuggestPathsByBasename(rawPath);
+        var hint = suggestions.Count == 0
+            ? ""
+            : "  Did you mean one of these (copy the path BYTE-FOR-BYTE):\n    - "
+              + string.Join("\n    - ", suggestions);
+
         if (Path.IsPathRooted(rawPath))
-            return $"file not found: {rawPath}. Path is absolute — verify it exists, or call db_search to locate the correct file.";
+            return $"file not found: {rawPath}. Path is absolute — verify it exists, " +
+                   $"or call db_search to locate the correct file.{hint}";
 
         if (_projectRoot == null)
             return $"file not found: {rawPath}. PROJECT CONTEXT is (none) so '{tool}' only accepts ABSOLUTE paths. " +
-                   "Call db_search and use the `abs_path` field of a hit, or call list_projects to get a root_path and join it with the relative path.";
+                   "Call db_search and use the `abs_path` field of a hit, or call list_projects to get a root_path " +
+                   $"and join it with the relative path.{hint}";
 
         return $"file not found: {rawPath} (resolved against project root {_projectRoot}). " +
-               "Re-check the path via db_search, or pass an absolute path.";
+               $"Re-check the path via db_search, or pass an absolute path.{hint}";
+    }
+
+    // Pulls candidate abs_paths from the index by basename. Caps at 3 hits —
+    // any more and the tool-result payload starts pushing the chat window
+    // around, which is what we're trying to avoid on small-model setups.
+    private List<string> SuggestPathsByBasename(string rawPath)
+    {
+        var basename = Path.GetFileName(rawPath.Replace('\\', '/'));
+        if (string.IsNullOrEmpty(basename)) return new List<string>();
+
+        List<SearchResult> hits;
+        try { hits = _db.Search(basename, type: "file", limit: 5); }
+        catch { return new List<string>(); }
+        if (hits.Count == 0) return new List<string>();
+
+        Dictionary<long, string> roots;
+        try { roots = _db.GetProjectRootsByScanIds(hits.Select(h => h.ScanId).Distinct()); }
+        catch { return new List<string>(); }
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var picks = new List<string>();
+        foreach (var h in hits)
+        {
+            if (string.IsNullOrEmpty(h.Path)) continue;
+            if (!roots.TryGetValue(h.ScanId, out var root)) continue;
+            string abs;
+            try { abs = Path.GetFullPath(Path.Combine(root, h.Path)); }
+            catch { continue; }
+            // Skip the exact path the caller already tried — suggesting it
+            // back would be confusing ("the file we couldn't find is the
+            // file we couldn't find").
+            if (string.Equals(abs, rawPath, StringComparison.OrdinalIgnoreCase)) continue;
+            if (seen.Add(abs)) picks.Add(abs);
+            if (picks.Count >= 3) break;
+        }
+        return picks;
     }
 
     private string? ResolvePath(string raw)

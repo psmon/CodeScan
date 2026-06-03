@@ -83,6 +83,12 @@ public sealed class ChatView : IAsyncDisposable
     private SqliteStore? _db;
     private ChatSessionLogger? _logger;
 
+    // Short tag printed in front of every assistant "done" line — switches
+    // with the chat template so the user sees who's actually answering
+    // when they swap models mid-session. Set when StartChatAsync resolves
+    // the template via ChatTemplateRegistry.
+    private string _assistantLabel = "Assistant";
+
     private enum Mode { Start, Downloading, Loading, Chat, TearingDown }
     private Mode _mode = Mode.Start;
     private volatile bool _busy;
@@ -96,7 +102,7 @@ public sealed class ChatView : IAsyncDisposable
 
         _titleLabel = new Label
         {
-            Text = "Chat (Gemma 4 on-device — CPU only)",
+            Text = "Chat — on-device LLM (Gemma 4 / Nemotron 3 Nano)",
             X = 1, Y = 3,
             Visible = false,
         };
@@ -222,11 +228,11 @@ public sealed class ChatView : IAsyncDisposable
 
         _downloadBtn = new Button
         {
-            Text = "[Download Default Model (Gemma 4 E4B, ~5GB)]",
+            Text = "[Download Model…]",
             X = 1, Y = 21,
             Visible = false,
         };
-        _downloadBtn.Accepting += (_, _) => _ = DownloadDefaultModelAsync();
+        _downloadBtn.Accepting += (_, _) => _ = PickAndDownloadModelAsync();
 
         // Download screen widgets ------------------------------------------
         _downloadTitleLabel = new Label
@@ -474,10 +480,10 @@ public sealed class ChatView : IAsyncDisposable
             _modelPathLabel.Text = $"Model: {_selectedModelPath}";
         }
 
-        // Surface the download button whenever the catalog default isn't
-        // already on disk. We check FindModel (not just the local dir) so the
-        // dev fallback path in ModelLocator counts as "present".
-        _downloadBtn.Visible = ModelLocator.FindModel(ChatModelCatalog.Default) == null;
+        // Surface the download button whenever ANY catalog model isn't yet
+        // on disk. FindModel honours the dev-fallback path so a single Gemma
+        // GGUF shared with AgentZeroLite counts as "present".
+        _downloadBtn.Visible = ChatModelCatalog.All.Any(e => ModelLocator.FindModel(e) == null);
 
         _modelList.SetSource(_modelListItems);
         _modelList.SelectedItem = 0;
@@ -801,11 +807,76 @@ public sealed class ChatView : IAsyncDisposable
         _cancelDownloadBtn.SetFocus();
     }
 
-    private async Task DownloadDefaultModelAsync()
+    private Task PickAndDownloadModelAsync()
+    {
+        if (_busy || _mode == Mode.Downloading) return Task.CompletedTask;
+
+        // Only offer entries we don't already have on disk. Anything else
+        // is just noise in the picker.
+        var missing = ChatModelCatalog.All
+            .Where(e => ModelLocator.FindModel(e) == null)
+            .ToList();
+        if (missing.Count == 0)
+        {
+            MessageBox.Query("Already downloaded",
+                "All catalog models are already available. Drop other GGUFs into\n" +
+                ModelLocator.ModelsDir + " manually.",
+                "OK");
+            return Task.CompletedTask;
+        }
+
+        ChatModelEntry chosen;
+        if (missing.Count == 1)
+        {
+            chosen = missing[0];
+        }
+        else
+        {
+            // Button labels must stay short — MessageBox lays them out on a
+            // single row and a typical TUI is 80 columns. Use the short Id
+            // for the buttons and put the full DisplayName / size in the
+            // message body so the user can still see what they're picking.
+            var detailLines = string.Join("\n",
+                missing.Select((m, i) => $"  {i + 1}. {m.DisplayName}"));
+            var labels = missing
+                .Select(m => ShortLabel(m))
+                .Append("Cancel")
+                .ToArray();
+            var pick = MessageBox.Query("Pick model to download",
+                $"Target dir:\n  {ModelLocator.ModelsDir}\n\n" +
+                "Available downloads:\n" + detailLines,
+                labels);
+            if (pick < 0 || pick >= missing.Count) return Task.CompletedTask;
+            chosen = missing[pick];
+        }
+
+        return DownloadModelAsync(chosen);
+    }
+
+    // Compact button labels for the download picker. Mapping by Id so a
+    // future catalog change can't accidentally reintroduce a 40-char button.
+    private static string ShortLabel(ChatModelEntry e) => e.Id switch
+    {
+        "gemma-4-E4B-UD-Q4_K_XL" => "Gemma 4 E4B",
+        "gemma-4-E2B-UD-Q4_K_XL" => "Gemma 4 E2B",
+        "nvidia-nemotron-3-nano-4b-q4_k_m" => "Nemotron 3 Nano",
+        _ => Trim(e.DisplayName, 16),
+    };
+
+    // Short tag for the transcript's "[<who>] reply" line. Pulls from the
+    // template's Name so a future template (Qwen, Llama, …) doesn't need a
+    // ChatView edit to label its answers correctly.
+    private static string SpeakerLabelFor(IChatTemplate template) => template switch
+    {
+        NemotronChatTemplate => "Nemotron",
+        GemmaChatTemplate => "Gemma",
+        _ => template.Name,  // fallback for future templates
+    };
+
+    private async Task DownloadModelAsync(ChatModelEntry entry)
     {
         if (_busy || _mode == Mode.Downloading) return;
 
-        var entry = ChatModelCatalog.Default;
         var dest = ModelLocator.TargetPath(entry);
 
         // Sanity: if the model raced into existence (e.g. user dropped it in),
@@ -1001,16 +1072,25 @@ public sealed class ChatView : IAsyncDisposable
                     gpuLayerCount: gpuLayers,
                     mainGpu: mainGpu,
                     progress: progress));
+
+            // Pick the chat template that matches the selected GGUF. Catalog
+            // entries pin a family; custom drops fall back to filename /
+            // arch sniffing via ChatTemplateRegistry.
+            var template = ChatTemplateRegistry.For(_selectedModelPath, _modelMeta);
+            _assistantLabel = SpeakerLabelFor(template);
+
             _loop = new AgentChatLoop(
                 _host,
                 new CodeScanToolbelt(_db, _selectedProjectRoot),
                 projectRoot: _selectedProjectRoot,
                 logger: _logger,
+                template: template,
                 maxIterations: 6,
                 maxTokensPerTurn: maxResponseTokens);
 
             AppendHistory(
                 $"Model loaded.\n" +
+                $"Chat template: {template.Name}\n" +
                 (_selectedProjectRoot != null
                     ? $"Project context: #{_selectedProjectId} {_selectedProjectRoot}\n"
                     : "Project context: (none — only absolute paths can be read)\n") +
@@ -1103,7 +1183,7 @@ public sealed class ChatView : IAsyncDisposable
                         break;
                     }
                     case "done":
-                        AppendHistory($"\n[Gemma] {update.Text}\n");
+                        AppendHistory($"\n[{_assistantLabel}] {update.Text}\n");
                         UpdateStatus("ready");
                         break;
                     case "error":
