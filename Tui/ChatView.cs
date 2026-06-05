@@ -56,8 +56,11 @@ public sealed class ChatView : IAsyncDisposable
     // Maps _responseRadio.SelectedItem → AgentChatLoop.maxTokensPerTurn.
     // Capped at 4096 so a runaway model can't burn its entire ctx window
     // in one turn; the user can raise this with a fresh ChatView.
+    // Default is Long: the system prompt now asks for fenced code blocks
+    // and multi-section answers on analysis questions — Medium (1024)
+    // cut Korean answers off mid-snippet.
     private static readonly int[] ResponseTokenChoices = { 512, 1024, 2048, 4096 };
-    private const int DefaultResponseIndex = 1;  // Medium
+    private const int DefaultResponseIndex = 2;  // Long
 
     // Download screen
     private readonly Label _downloadTitleLabel;

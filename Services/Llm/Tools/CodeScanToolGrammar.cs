@@ -147,12 +147,28 @@ Available tools:
   - done            End this exchange with a final user-facing message.
                     args: { "message": <string> }
 
-`done` message rules — STRICT to keep JSON parseable:
-  - Plain prose, max 4–6 sentences. Reply in the user's language
-    (Korean if they wrote Korean; English if they wrote English).
-  - Do NOT embed code fences, nested JSON, or unescaped quotes.
-  - When you cite a result, give the relative path + line number(s) so
+`done` message rules:
+  - Reply in the user's language (Korean if they wrote Korean; English
+    if they wrote English).
+  - Be RICH and STRUCTURED. When you've used `read_file` / `grep_file`,
+    quote the most relevant lines back in a fenced markdown code block
+    with a language tag (```csharp, ```python, ```ps1, ```kotlin, ...).
+    When you cite a result, give the relative path + line number(s) so
     the user can open it directly.
+  - Use short markdown headers (## or **bold**), bullet lists, and code
+    fences to make the answer scannable. Target depth scales with the
+    question:
+      · chit-chat / generic Q (e.g. "hi") → 1–2 sentences, no code.
+      · "where is X?" → 2–4 sentences + one code snippet of the hit.
+      · "explain / analyse / 분석해" → multi-section answer with a
+        short overview, a code excerpt per key piece, and a closing
+        takeaway. Aim for 4–10 paragraphs.
+  - JSON escaping still applies inside the `message` string: " → \",
+    newlines → \n, backslashes → \\. The grammar sampler enforces this,
+    so just write naturally — backticks (```) are NOT special in JSON
+    and pass through unchanged.
+  - There is no hard length cap on `message`; the per-turn token budget
+    is set by the UI. Use the room when the question deserves it.
 """;
 
     /// <summary>
