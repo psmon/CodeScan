@@ -95,6 +95,12 @@ public sealed class ChatView : IAsyncDisposable
     private enum Mode { Start, Downloading, Loading, Chat, TearingDown }
     private Mode _mode = Mode.Start;
     private volatile bool _busy;
+
+    // True while the user is parked at the bottom of the history view —
+    // streaming tokens then snap the viewport to the latest line. Flips to
+    // false the moment the user PgUp's so the view stops yanking them back
+    // mid-read; flips back to true when they PgDn / End back to the bottom.
+    private bool _stickToBottom = true;
     private CancellationTokenSource? _cts;
     private CancellationTokenSource? _downloadCts;
 
@@ -102,6 +108,53 @@ public sealed class ChatView : IAsyncDisposable
     {
         _root = root;
         _onExit = onExit;
+
+        // Chat-screen dark palette. Defined once at construction and reused
+        // on every widget below — the toplevel's global scheme on its own
+        // bled cyan/green into focused widgets (TextView focus bg, button
+        // hot-key), which the user reported as "green background, hard to
+        // read". Explicit per-widget schemes prevent that inheritance.
+        //
+        //   _historyScheme  — long-read transcript. Soft gray on black so
+        //                     it stays calm during a 4096-token answer.
+        //                     Focus brightens text only, keeps bg black.
+        //   _inputScheme    — distinct from the transcript so the user
+        //                     visually finds where to type. Darker gray
+        //                     bg sits above pure black.
+        //   _statusScheme   — muted hint line — never the focus of attention.
+        //   _buttonScheme   — Send button. Cyan only when focused.
+        var historyScheme = new ColorScheme
+        {
+            Normal    = new Terminal.Gui.Attribute(Color.Gray,       Color.Black),
+            Focus     = new Terminal.Gui.Attribute(Color.White,      Color.Black),
+            HotNormal = new Terminal.Gui.Attribute(Color.BrightCyan, Color.Black),
+            HotFocus  = new Terminal.Gui.Attribute(Color.BrightCyan, Color.Black),
+            Disabled  = new Terminal.Gui.Attribute(Color.DarkGray,   Color.Black),
+        };
+        var inputScheme = new ColorScheme
+        {
+            Normal    = new Terminal.Gui.Attribute(Color.White,        Color.DarkGray),
+            Focus     = new Terminal.Gui.Attribute(Color.White,        Color.DarkGray),
+            HotNormal = new Terminal.Gui.Attribute(Color.BrightYellow, Color.DarkGray),
+            HotFocus  = new Terminal.Gui.Attribute(Color.BrightYellow, Color.DarkGray),
+            Disabled  = new Terminal.Gui.Attribute(Color.Gray,         Color.Black),
+        };
+        var statusScheme = new ColorScheme
+        {
+            Normal    = new Terminal.Gui.Attribute(Color.DarkGray, Color.Black),
+            Focus     = new Terminal.Gui.Attribute(Color.DarkGray, Color.Black),
+            HotNormal = new Terminal.Gui.Attribute(Color.DarkGray, Color.Black),
+            HotFocus  = new Terminal.Gui.Attribute(Color.DarkGray, Color.Black),
+            Disabled  = new Terminal.Gui.Attribute(Color.DarkGray, Color.Black),
+        };
+        var buttonScheme = new ColorScheme
+        {
+            Normal    = new Terminal.Gui.Attribute(Color.Black,        Color.Gray),
+            Focus     = new Terminal.Gui.Attribute(Color.Black,        Color.BrightCyan),
+            HotNormal = new Terminal.Gui.Attribute(Color.BrightYellow, Color.Gray),
+            HotFocus  = new Terminal.Gui.Attribute(Color.BrightYellow, Color.BrightCyan),
+            Disabled  = new Terminal.Gui.Attribute(Color.DarkGray,     Color.Black),
+        };
 
         _titleLabel = new Label
         {
@@ -283,7 +336,13 @@ public sealed class ChatView : IAsyncDisposable
             ReadOnly = true,
             WordWrap = true,
             Visible = false,
+            ColorScheme = historyScheme,
         };
+        // AutoShow draws the vertical scrollbar only once content overflows
+        // the viewport — the chat history is bounded by AnchorEnd(4)/Y=3 so
+        // anything past ~20 rows on a 24-row terminal needs scrolling to
+        // re-read. PgUp/PgDn are wired up from the input field below.
+        _historyView.VerticalScrollBar.AutoShow = true;
 
         _statusLabel = new Label
         {
@@ -291,6 +350,7 @@ public sealed class ChatView : IAsyncDisposable
             X = 1, Y = Pos.AnchorEnd(4),
             Width = Dim.Fill(2),
             Visible = false,
+            ColorScheme = statusScheme,
         };
 
         _inputField = new TextField
@@ -299,6 +359,7 @@ public sealed class ChatView : IAsyncDisposable
             X = 1, Y = Pos.AnchorEnd(3),
             Width = Dim.Fill(15),
             Visible = false,
+            ColorScheme = inputScheme,
         };
 
         _sendBtn = new Button
@@ -306,12 +367,15 @@ public sealed class ChatView : IAsyncDisposable
             Text = "Send (Enter)",
             X = Pos.AnchorEnd(14), Y = Pos.AnchorEnd(3),
             Visible = false,
+            ColorScheme = buttonScheme,
         };
         _sendBtn.Accepting += (_, _) => _ = SendAsync();
 
         // Enter inside the input field triggers send too — both the field's
         // Accepting event and a KeyDown fallback fire so we handle either
-        // Terminal.Gui v2 binding path.
+        // Terminal.Gui v2 binding path. PgUp/PgDn/End/Home/Ctrl+End forward
+        // to the history view so the user can scroll without Tab-jumping
+        // off the input — focus stays where they type.
         _inputField.Accepting += (_, _) => _ = SendAsync();
         _inputField.KeyDown += (_, k) =>
         {
@@ -319,6 +383,40 @@ public sealed class ChatView : IAsyncDisposable
             {
                 k.Handled = true;
                 _ = SendAsync();
+            }
+            else if (k == Key.PageUp)
+            {
+                ScrollHistory(-PageDelta());
+                k.Handled = true;
+            }
+            else if (k == Key.PageDown)
+            {
+                ScrollHistory(PageDelta());
+                k.Handled = true;
+            }
+            else if (k == Key.CursorUp)
+            {
+                // Single-line TextField has no built-in Up handler, so we
+                // claim it for history scroll-by-line. Keeps the user's
+                // cursor parked in the input — they can keep typing after.
+                ScrollHistory(-1);
+                k.Handled = true;
+            }
+            else if (k == Key.CursorDown)
+            {
+                ScrollHistory(1);
+                k.Handled = true;
+            }
+            else if (k == Key.End.WithCtrl)
+            {
+                JumpHistoryToEnd();
+                k.Handled = true;
+            }
+            else if (k == Key.Home.WithCtrl)
+            {
+                _historyView.MoveHome();
+                _stickToBottom = false;
+                k.Handled = true;
             }
         };
 
@@ -1098,7 +1196,8 @@ public sealed class ChatView : IAsyncDisposable
                     ? $"Project context: #{_selectedProjectId} {_selectedProjectRoot}\n"
                     : "Project context: (none — only absolute paths can be read)\n") +
                 $"Chat log: {_logger.LogPath}\n" +
-                "Ask me anything about this codebase. Type a question and press Enter.\n\n");
+                "Ask me anything about this codebase. Type a question and press Enter.\n" +
+                "Scroll: PgUp / PgDn • Jump: Ctrl+Home / Ctrl+End\n\n");
             UpdateStatus("ready");
             _mode = Mode.Chat;
             _inputField.Text = "";
@@ -1138,6 +1237,10 @@ public sealed class ChatView : IAsyncDisposable
         _statusLabel.Visible = true;
         _inputField.Visible = true;
         _sendBtn.Visible = true;
+
+        // Re-arm bottom-sticking each time we (re-)enter the chat screen,
+        // before any AppendHistory runs against the cleared view.
+        _stickToBottom = true;
     }
 
     private async Task SendAsync()
@@ -1243,10 +1346,71 @@ public sealed class ChatView : IAsyncDisposable
             try
             {
                 _historyView.Text += text;
-                _historyView.MoveEnd();
+                // Only auto-snap to the bottom if the user is already there.
+                // Mid-scroll-up, leave their viewport alone so they can finish
+                // reading whatever the previous assistant turn produced.
+                if (_stickToBottom) _historyView.MoveEnd();
             }
             catch { /* UI update failed, ignore */ }
         });
+    }
+
+    // ------------------------------------------------------------------
+    // History scroll plumbing — invoked from the input field's KeyDown
+    // so the user never has to Tab away to read older turns.
+    // ------------------------------------------------------------------
+    private int PageDelta()
+    {
+        // One viewport-minus-one so the line that was at the boundary stays
+        // visible after the page-flip — same behaviour as `less` / `vim`.
+        var h = _historyView.Viewport.Height;
+        return h > 1 ? h - 1 : 1;
+    }
+
+    private void ScrollHistory(int delta)
+    {
+        Application.Invoke(() =>
+        {
+            try
+            {
+                _historyView.ScrollVertical(delta);
+                if (delta > 0 && AtBottom())
+                {
+                    // The user PgDn'd back to the end → resume bottom-sticking
+                    // so subsequent tokens stream into view as they arrive.
+                    _historyView.MoveEnd();
+                    _stickToBottom = true;
+                }
+                else if (delta < 0)
+                {
+                    // Any upward movement detaches the sticky bottom.
+                    _stickToBottom = false;
+                }
+            }
+            catch { /* ignore */ }
+        });
+    }
+
+    private void JumpHistoryToEnd()
+    {
+        Application.Invoke(() =>
+        {
+            try
+            {
+                _historyView.MoveEnd();
+                _stickToBottom = true;
+            }
+            catch { /* ignore */ }
+        });
+    }
+
+    private bool AtBottom()
+    {
+        // Viewport.Y is the top-of-viewport row; reaching the last possible
+        // top-row means the last content row sits at the bottom of the view.
+        var contentH = _historyView.GetContentSize().Height;
+        var viewportH = _historyView.Viewport.Height;
+        return _historyView.Viewport.Y >= Math.Max(0, contentH - viewportH);
     }
 
     private void UpdateStatus(string text)
