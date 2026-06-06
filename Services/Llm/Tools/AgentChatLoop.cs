@@ -15,10 +15,18 @@ public sealed record ToolTurn(ToolCall Call, string ToolResult);
 public sealed record ChatTurnUpdate(
     // "thinking"     — entering a turn, no token activity yet
     // "progress"     — periodic token-count update during generation
+    // "stream_delta" — incremental clean text from a `done` message body
+    //                  as it is being generated. Multiple deltas per turn.
+    //                  UI appends directly to the transcript.
+    // "stream_end"   — terminal marker for a turn rendered via stream_delta.
+    //                  No payload; UI closes the speaker block. Replaces
+    //                  "done" when streaming was used.
     // "raw"          — raw model JSON for THIS turn (always emitted before parse)
     // "tool"         — parsed tool call about to be executed
     // "tool_result"  — result string returned by the toolbelt (truncated)
-    // "done"         — final user-visible message from the model
+    // "done"         — final user-visible message. Only emitted on
+    //                  non-streamed paths (empty raw, salvage without
+    //                  prior streaming, fallthrough).
     // "error"        — fatal turn error; loop is over
     string Phase,
     string Text);
@@ -62,10 +70,17 @@ public sealed class AgentChatLoop : IAsyncDisposable
 
     private bool _disposed;
 
-    // Channel used by the generation task to push "progress" updates back
-    // into the SendAsync async iterator. Stays alive for one turn; reset on
-    // every new GenerateOneTurnAsync call.
-    private System.Threading.Channels.Channel<int>? _progressChannel;
+    // Channel used by the generation task to push live updates (progress
+    // counts AND stream_delta body chunks) back into the SendAsync async
+    // iterator. Stays alive for one turn; reset on every new
+    // GenerateOneTurnAsync call.
+    private System.Threading.Channels.Channel<ChatTurnUpdate>? _streamChannel;
+
+    // Tracks the JSON streaming state of the current generation turn —
+    // detects when the model has crossed into the `done` tool's `message`
+    // body and emits cleaned text chunks. Reset per turn alongside the
+    // channel above. Null between turns.
+    private JsonDoneStreamer? _doneStreamer;
 
     public AgentChatLoop(
         LlmHost host,
@@ -126,21 +141,35 @@ public sealed class AgentChatLoop : IAsyncDisposable
 
             yield return new ChatTurnUpdate("thinking", iter == 0 ? "Reading the question…" : "Reasoning…");
 
-            // Start generation and stream token-count progress alongside it.
-            // The generation task pushes ints into _progressChannel as it
-            // crosses every _progressTokenInterval-token boundary; we drain
-            // the channel in lockstep with the iterator's yields.
-            _progressChannel = System.Threading.Channels.Channel.CreateUnbounded<int>(
+            // Start generation and stream live updates alongside it. The
+            // generation task pushes ChatTurnUpdate values — periodic
+            // "progress" counters every _progressTokenInterval tokens AND
+            // "stream_delta" chunks of clean body text as soon as we know
+            // the model is writing the `done` message. We drain in lockstep
+            // with the iterator's yields so the UI sees the answer appear
+            // mid-generation instead of waiting for the full turn.
+            _streamChannel = System.Threading.Channels.Channel.CreateUnbounded<ChatTurnUpdate>(
                 new System.Threading.Channels.UnboundedChannelOptions
                 {
                     SingleReader = true,
                     SingleWriter = true,
                 });
+            _doneStreamer = new JsonDoneStreamer();
 
-            var generateTask = GenerateOneTurnAsync(turnInput, ct);
+            // Push the synchronous-from-tok-to-tok llama.cpp inference loop
+            // onto a thread-pool worker. Otherwise the StatelessExecutor's
+            // InferAsync — which returns a sync-completed ValueTask per
+            // token on the Vulkan backend — would tie up the calling
+            // (UI) thread for the whole turn, and the channel writes below
+            // would only be DRAINED after generation finishes. The reader
+            // here lives on the iterator's caller thread; the writer side
+            // now runs in parallel, so each TryWrite wakes the reader.
+            // Without this, the prior `stream_delta` work appears to "not
+            // stream" — all deltas arrive at the very end in one burst.
+            var generateTask = Task.Run(() => GenerateOneTurnAsync(turnInput, ct), ct);
 
-            await foreach (var tokenCount in _progressChannel.Reader.ReadAllAsync(ct).ConfigureAwait(false))
-                yield return new ChatTurnUpdate("progress", $"generating… {tokenCount} tokens");
+            await foreach (var upd in _streamChannel.Reader.ReadAllAsync(ct).ConfigureAwait(false))
+                yield return upd;
 
             string? rawJson = null;
             string? generateErr = null;
@@ -203,7 +232,19 @@ public sealed class AgentChatLoop : IAsyncDisposable
                 {
                     var notice = "\n\n_(응답이 토큰 한도에 도달해 잘렸습니다 — 응답 길이를 Max로 올리거나 더 좁은 범위로 다시 질문해 주세요.)_";
                     _logger?.Write("done", $"(salvaged from truncated JSON) {salvaged}");
-                    yield return new ChatTurnUpdate("done", salvaged + notice);
+                    if (_doneStreamer?.StreamedAnything == true)
+                    {
+                        // Body was already painted to the transcript by the
+                        // stream_delta pipeline; only the closing notice is
+                        // missing. Avoid the duplicate by piggy-backing it
+                        // as one more delta and closing out.
+                        yield return new ChatTurnUpdate("stream_delta", notice);
+                        yield return new ChatTurnUpdate("stream_end", "");
+                    }
+                    else
+                    {
+                        yield return new ChatTurnUpdate("done", salvaged + notice);
+                    }
                     yield break;
                 }
                 _logger?.Write("error", parseErr);
@@ -231,7 +272,16 @@ public sealed class AgentChatLoop : IAsyncDisposable
                     ? v.GetValue<string>()
                     : "(no message)";
                 _logger?.Write("done", msg);
-                yield return new ChatTurnUpdate("done", msg);
+                if (_doneStreamer?.StreamedAnything == true)
+                {
+                    // Body painted live during generation — UI just needs
+                    // the close signal so it can restore the prompt.
+                    yield return new ChatTurnUpdate("stream_end", "");
+                }
+                else
+                {
+                    yield return new ChatTurnUpdate("done", msg);
+                }
                 yield break;
             }
 
@@ -290,15 +340,26 @@ public sealed class AgentChatLoop : IAsyncDisposable
 
         var sb = new StringBuilder();
         var tokensSeen = 0;
-        var channel = _progressChannel;  // local copy — gets reset per turn
+        var channel = _streamChannel;    // local copies — both get reset per turn
+        var streamer = _doneStreamer;
         try
         {
             await foreach (var tok in _executor.InferAsync(prompt, inferenceParams, ct))
             {
                 sb.Append(tok);
                 tokensSeen++;
-                if (channel != null && tokensSeen % _progressTokenInterval == 0)
-                    channel.Writer.TryWrite(tokensSeen);
+                if (channel == null) continue;
+
+                // Push body chunks the moment the streamer detects we're
+                // inside the `done` message string. The first delta pays
+                // for the JSON-preamble scan; subsequent deltas are a thin
+                // per-character pass.
+                var delta = streamer?.Feed(tok);
+                if (!string.IsNullOrEmpty(delta))
+                    channel.Writer.TryWrite(new ChatTurnUpdate("stream_delta", delta));
+
+                if (tokensSeen % _progressTokenInterval == 0)
+                    channel.Writer.TryWrite(new ChatTurnUpdate("progress", $"generating… {tokensSeen} tokens"));
             }
         }
         finally
@@ -436,5 +497,142 @@ public sealed class AgentChatLoop : IAsyncDisposable
         // the inference state on each InferAsync. Weights stay alive on the
         // host until LlmHost itself is disposed.
         return ValueTask.CompletedTask;
+    }
+
+    /// <summary>
+    /// Incremental scanner that watches the model's per-token JSON output,
+    /// detects the moment it enters the `done` tool's `message` string,
+    /// and yields cleaned body chunks (JSON-unescaped) ready to paint to
+    /// the TUI transcript. Built char-by-char so the cost is amortised
+    /// across the existing token-loop without re-scanning the buffer.
+    ///
+    /// Lifecycle: instantiated fresh at the start of every generation
+    /// turn, then `Feed(token)` once per llama-token. The streamer is a
+    /// no-op for non-done tool calls — `Feed` simply returns null forever
+    /// because the `"message":"` anchor never appears.
+    /// </summary>
+    internal sealed class JsonDoneStreamer
+    {
+        // The "message" key — we then need to skip optional whitespace
+        // around the `:` and find the opening `"`. Real Gemma/Nemotron
+        // output uses `"message": "` (with a space after the colon), not
+        // the canonically-tight `"message":"`. An exact-literal IndexOf
+        // for the tight form never matches the spaced form, the streamer
+        // stays parked in Preamble forever, and the user sees the answer
+        // arrive in one burst at the end — which is exactly the bug that
+        // chased the earlier "streaming doesn't work" reports.
+        private const string MessageKey = "\"message\"";
+
+        private enum Phase
+        {
+            // Buffering raw output, scanning for the message anchor.
+            Preamble,
+            // Inside the message string — process chars with JSON escape rules.
+            InMessage,
+            // Saw the closing quote — done emitting.
+            AfterMessage,
+        }
+
+        private Phase _phase = Phase.Preamble;
+        private readonly StringBuilder _preamble = new();
+        private bool _afterBackslash;
+        private int _uHexLeft;             // 0 normally; 4..1 while collecting hex digits of `\u`
+        private readonly char[] _uHex = new char[4];
+        private int _uHexIdx;
+        private bool _emitted;
+
+        public bool StreamedAnything => _emitted;
+
+        public string? Feed(string chunk)
+        {
+            if (_phase == Phase.AfterMessage || string.IsNullOrEmpty(chunk)) return null;
+
+            string toScan;
+            if (_phase == Phase.Preamble)
+            {
+                _preamble.Append(chunk);
+                if (!TryFindBodyStart(_preamble.ToString(), out var bodyStart))
+                    return null;            // anchor incomplete — keep buffering
+                _phase = Phase.InMessage;
+                toScan = _preamble.ToString()[bodyStart..];
+                _preamble.Clear();
+            }
+            else
+            {
+                toScan = chunk;
+            }
+
+            var sb = new StringBuilder();
+            for (var i = 0; i < toScan.Length; i++)
+            {
+                if (_phase == Phase.AfterMessage) break;
+                var c = toScan[i];
+
+                if (_uHexLeft > 0)
+                {
+                    _uHex[_uHexIdx++] = c;
+                    _uHexLeft--;
+                    if (_uHexLeft == 0)
+                    {
+                        var hex = new string(_uHex, 0, _uHexIdx);
+                        _uHexIdx = 0;
+                        if (ushort.TryParse(hex, System.Globalization.NumberStyles.HexNumber,
+                                            System.Globalization.CultureInfo.InvariantCulture, out var cp))
+                            sb.Append((char)cp);
+                    }
+                    continue;
+                }
+
+                if (_afterBackslash)
+                {
+                    _afterBackslash = false;
+                    switch (c)
+                    {
+                        case '"':  sb.Append('"');  break;
+                        case '\\': sb.Append('\\'); break;
+                        case '/':  sb.Append('/');  break;
+                        case 'b':  sb.Append('\b'); break;
+                        case 'f':  sb.Append('\f'); break;
+                        case 'n':  sb.Append('\n'); break;
+                        case 'r':  sb.Append('\r'); break;
+                        case 't':  sb.Append('\t'); break;
+                        case 'u':  _uHexLeft = 4; _uHexIdx = 0; break;
+                        default:   /* grammar rejects others — ignore defensively */ break;
+                    }
+                    continue;
+                }
+
+                if (c == '\\') { _afterBackslash = true; continue; }
+                if (c == '"')  { _phase = Phase.AfterMessage; break; }
+                sb.Append(c);
+            }
+
+            if (sb.Length == 0) return null;
+            _emitted = true;
+            return sb.ToString();
+        }
+
+        // Looks for `"message"<ws>?:<ws>?"` and reports the index of the
+        // first character of the body — i.e. the byte just past the
+        // opening quote. Returns false when the anchor is incomplete so
+        // the caller knows to keep buffering more tokens.
+        private static bool TryFindBodyStart(string buf, out int bodyStart)
+        {
+            bodyStart = 0;
+            var keyIdx = buf.IndexOf(MessageKey, StringComparison.Ordinal);
+            if (keyIdx < 0) return false;
+            var i = keyIdx + MessageKey.Length;
+            while (i < buf.Length && IsJsonWs(buf[i])) i++;
+            if (i >= buf.Length) return false;
+            if (buf[i] != ':') return false;            // shouldn't happen under grammar
+            i++;
+            while (i < buf.Length && IsJsonWs(buf[i])) i++;
+            if (i >= buf.Length) return false;
+            if (buf[i] != '"') return false;            // shouldn't happen under grammar
+            bodyStart = i + 1;
+            return true;
+
+            static bool IsJsonWs(char c) => c == ' ' || c == '\t' || c == '\n' || c == '\r';
+        }
     }
 }

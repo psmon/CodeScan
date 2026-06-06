@@ -1254,6 +1254,10 @@ public sealed class ChatView : IAsyncDisposable
         AppendHistory($"\n[You] {text}\n");
         _inputField.Text = "";
         UpdateStatus("thinking…");
+        // Per-turn flag: flips true on first stream_delta and back to false
+        // on stream_end. Tells the done handler whether the body was
+        // already painted to the transcript live, so we don't double-print.
+        var streamingThisTurn = false;
 
         try
         {
@@ -1266,12 +1270,44 @@ public sealed class ChatView : IAsyncDisposable
                         break;
                     case "progress":
                         // Token-count heartbeats — status-line only so the
-                        // transcript stays readable.
-                        UpdateStatus(update.Text);
+                        // transcript stays readable. While streaming, the
+                        // delta itself is the better feedback; keep counts
+                        // muted there to avoid a noisy ticker.
+                        if (!streamingThisTurn) UpdateStatus(update.Text);
                         break;
                     case "raw":
                         // Raw model JSON is captured in the disk log; we don't
                         // surface it in the transcript to keep the UI clean.
+                        break;
+                    case "stream_delta":
+                        // First delta of a turn → open the speaker block.
+                        // Subsequent deltas just append. AppendHistory honours
+                        // sticky-bottom so a user scrolled up isn't yanked.
+                        if (!streamingThisTurn)
+                        {
+                            streamingThisTurn = true;
+                            AppendHistory($"\n[{_assistantLabel}] ");
+                            UpdateStatus("streaming…");
+                        }
+                        AppendHistory(update.Text);
+                        // Yield to the main loop so the Invoke we just queued
+                        // actually paints before the next delta is drained.
+                        // The channel often holds multiple deltas at once
+                        // (the writer pool thread fires them in a tight
+                        // loop); without this yield, the UI thread keeps
+                        // draining and queues N Invokes back-to-back, and
+                        // the user sees them all appear together once the
+                        // foreach finally awaits an empty channel.
+                        await Task.Yield();
+                        break;
+                    case "stream_end":
+                        // Body already on screen; just close the block and
+                        // hand the prompt back. Don't reset
+                        // streamingThisTurn yet — keeps progress muted if
+                        // the loop somehow re-fires this turn.
+                        AppendHistory("\n");
+                        UpdateStatus("ready");
+                        streamingThisTurn = false;
                         break;
                     case "tool":
                     {
@@ -1289,6 +1325,10 @@ public sealed class ChatView : IAsyncDisposable
                         break;
                     }
                     case "done":
+                        // Non-streamed paths only — empty raw fallback,
+                        // salvage with nothing streamed, or unknown-tool
+                        // error rephrased as done. AgentChatLoop converts
+                        // the normal happy path into stream_end above.
                         AppendHistory($"\n[{_assistantLabel}] {update.Text}\n");
                         UpdateStatus("ready");
                         break;
@@ -1350,9 +1390,19 @@ public sealed class ChatView : IAsyncDisposable
                 // Mid-scroll-up, leave their viewport alone so they can finish
                 // reading whatever the previous assistant turn produced.
                 if (_stickToBottom) _historyView.MoveEnd();
+                // Tell the view it needs to repaint. The Text setter already
+                // sets dirty flags but the NetDriver's main loop is parked
+                // on a blocking Console read between keystrokes, so the dirty
+                // flag alone doesn't make pixels appear. Wakeup nudges the
+                // loop awake so streaming deltas show up at generation rate
+                // instead of being held until the user touches a key.
+                _historyView.SetNeedsDraw();
             }
             catch { /* UI update failed, ignore */ }
         });
+        // Outside the Invoke: cheap no-op when called on the UI thread, the
+        // signal that flushes the action queue otherwise.
+        try { Application.Wakeup(); } catch { /* shutting down */ }
     }
 
     // ------------------------------------------------------------------
