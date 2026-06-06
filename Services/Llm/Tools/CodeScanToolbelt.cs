@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -19,6 +20,22 @@ namespace CodeScan.Services.Llm.Tools;
 /// </summary>
 public sealed class CodeScanToolbelt
 {
+    // Pass non-ASCII bytes through as raw UTF-8 instead of escaping them
+    // to `\uXXXX`. The default System.Text.Json encoder turns every Korean
+    // char into a 6-byte escape sequence, and the model — when echoing the
+    // file content back inside its own code block — gets stuck reproducing
+    // those sequences and collapses into a `\t\t\t…` degenerate loop until
+    // the per-turn token budget is exhausted (see
+    // harness/logs/tamer/2026-06-06-…-chatmode-runtime-log-audit.md).
+    //
+    // Relaxed escaping is "unsafe" only in HTML embedding contexts; we
+    // never embed tool results in HTML — they go straight into the LLM
+    // prompt as plain text — so the safety caveat doesn't apply.
+    private static readonly JsonSerializerOptions RelaxedJsonOptions = new()
+    {
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+
     private readonly SqliteStore _db;
     private readonly string? _projectRoot;
 
@@ -115,7 +132,7 @@ public sealed class CodeScanToolbelt
                           "(3) Call `project_tree` first to learn folder/file names, then re-query with a name you see.";
         else if (roots.Count > 0)
             resp["hint"] = "Use the `abs_path` field of any result for read_file / grep_file. The `path` field is project-relative.";
-        return resp.ToJsonString();
+        return resp.ToJsonString(RelaxedJsonOptions);
     }
 
     // ------------------------------------------------------------------
@@ -155,7 +172,7 @@ public sealed class CodeScanToolbelt
             ["start"] = firstIdx + 1,
             ["end"] = lastIdx,
             ["text"] = sb.ToString(),
-        }.ToJsonString();
+        }.ToJsonString(RelaxedJsonOptions);
     }
 
     // ------------------------------------------------------------------
@@ -210,7 +227,7 @@ public sealed class CodeScanToolbelt
             ["pattern"] = pattern,
             ["count"] = hits.Count,
             ["matches"] = hits,
-        }.ToJsonString();
+        }.ToJsonString(RelaxedJsonOptions);
     }
 
     // ------------------------------------------------------------------
@@ -251,7 +268,7 @@ public sealed class CodeScanToolbelt
         };
         if (all.Count > shown.Count)
             result["note"] = $"only most-recent {shown.Count} of {all.Count} shown; ask user to narrow if needed";
-        return result.ToJsonString();
+        return result.ToJsonString(RelaxedJsonOptions);
     }
 
     // ------------------------------------------------------------------
@@ -274,7 +291,7 @@ public sealed class CodeScanToolbelt
             ["total_size"] = p.TotalSize,
             ["last_scanned_at"] = p.LastScannedAt,
             ["addinfo"] = p.AddInfo,
-        }.ToJsonString();
+        }.ToJsonString(RelaxedJsonOptions);
     }
 
     // ------------------------------------------------------------------
@@ -395,7 +412,7 @@ public sealed class CodeScanToolbelt
         };
         if (truncated)
             resp["note"] = $"output capped at {ProjectTreeLineCap} dirs; pass a smaller max_depth or ask about a subtree by name in db_search.";
-        return resp.ToJsonString();
+        return resp.ToJsonString(RelaxedJsonOptions);
     }
 
     // ------------------------------------------------------------------
@@ -442,7 +459,7 @@ public sealed class CodeScanToolbelt
             ["edge_count"] = graph.Edges.Count,
             ["nodes"] = nodes,
             ["edges"] = edges,
-        }.ToJsonString();
+        }.ToJsonString(RelaxedJsonOptions);
     }
 
     // ------------------------------------------------------------------
@@ -536,7 +553,7 @@ public sealed class CodeScanToolbelt
         => string.IsNullOrEmpty(s) || s.Length <= max ? s : s[..max] + "…";
 
     private static string Err(string msg)
-        => new JsonObject { ["ok"] = false, ["error"] = msg }.ToJsonString();
+        => new JsonObject { ["ok"] = false, ["error"] = msg }.ToJsonString(RelaxedJsonOptions);
 
     private static string ReadStr(JsonObject args, string key)
         => args.TryGetPropertyValue(key, out var v) && v is JsonValue jv && jv.TryGetValue<string>(out var s)

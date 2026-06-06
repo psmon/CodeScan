@@ -191,6 +191,21 @@ public sealed class AgentChatLoop : IAsyncDisposable
             catch (JsonException ex) { parseErr = $"model returned unparseable JSON: {ex.Message}\nraw: {Truncate(rawJson!, 200)}"; }
             if (parseErr != null)
             {
+                // Token-budget truncation rescue: when the model has emitted
+                // {"tool":"done","args":{"message":"…} and then runs out of
+                // tokens mid-string, JsonDocument throws. The user has waited
+                // for the whole turn — surfacing "[error] unparseable JSON"
+                // throws their work away. Salvage the partial message text
+                // when we can clearly tell that's what happened, and present
+                // it as a done update with a truncation notice.
+                var salvaged = TrySalvageTruncatedDoneMessage(rawJson!);
+                if (salvaged != null)
+                {
+                    var notice = "\n\n_(응답이 토큰 한도에 도달해 잘렸습니다 — 응답 길이를 Max로 올리거나 더 좁은 범위로 다시 질문해 주세요.)_";
+                    _logger?.Write("done", $"(salvaged from truncated JSON) {salvaged}");
+                    yield return new ChatTurnUpdate("done", salvaged + notice);
+                    yield break;
+                }
                 _logger?.Write("error", parseErr);
                 yield return new ChatTurnUpdate("error", parseErr);
                 yield break;
@@ -255,6 +270,21 @@ public sealed class AgentChatLoop : IAsyncDisposable
                 Temperature = _temperature,
                 Grammar = _grammar,
                 GrammarOptimization = DefaultSamplingPipeline.GrammarOptimizationMode.Extended,
+                // Penalize tokens that already appear in the last
+                // PenaltyCount-token window. Cheap insurance against the
+                // degenerate `\t\t\t…` (or `\u…\u…`) loops that this model
+                // family slides into when a long code-fence echo runs out
+                // of natural variety mid-string. The logit penalty is
+                // applied before the grammar accept/reject step, so the
+                // grammar still guarantees structurally valid JSON.
+                // 1.08 is light enough not to noticeably hurt natural
+                // Korean/English prose; 64 tokens is roughly two screen
+                // rows of wrap, big enough to catch the loop early.
+                // PenalizeNewline stays false so paragraph formatting
+                // isn't smeared.
+                RepeatPenalty = 1.08f,
+                PenaltyCount = 64,
+                PenalizeNewline = false,
             },
         };
 
@@ -307,6 +337,96 @@ public sealed class AgentChatLoop : IAsyncDisposable
 
     private static string Truncate(string s, int max)
         => string.IsNullOrEmpty(s) || s.Length <= max ? s : s[..max] + "…";
+
+    /// <summary>
+    /// When grammar-constrained generation runs out of tokens mid-string,
+    /// the rawJson looks like:
+    ///   {"tool": "done", "args": {"message": "## Heading\n\nSome text...
+    /// — no closing quote, no closing braces. JsonDocument refuses to parse
+    /// that. We can still return the in-flight message text by:
+    ///   1) finding the opening of `"message":"…`
+    ///   2) unescaping just the JSON string body up to wherever it cuts off
+    ///   3) dropping any trailing dangling backslash (would be a half-emitted
+    ///      escape sequence — `\u00`, `\x`, etc.)
+    /// Returns null when the raw doesn't look like a truncated done call
+    /// (e.g. truncated tool call or malformed in a different way) — callers
+    /// fall back to the regular error path in that case.
+    /// </summary>
+    internal static string? TrySalvageTruncatedDoneMessage(string rawJson)
+    {
+        if (string.IsNullOrEmpty(rawJson)) return null;
+        // Must look like a done call. Grammar emits the keys in a fixed
+        // order (tool first, args second) so a substring check is enough.
+        if (!rawJson.Contains("\"tool\"") || !rawJson.Contains("\"done\"")) return null;
+
+        // Locate the start of the message value. Allow whitespace around
+        // the colon — the grammar permits it. Hand-rolled scan because the
+        // project pins all regex behind [GeneratedRegex] for AOT safety
+        // (see CLAUDE.md) and the pattern here is too cheap to need one.
+        var keyIdx = rawJson.IndexOf("\"message\"", StringComparison.Ordinal);
+        if (keyIdx < 0) return null;
+        var i0 = keyIdx + "\"message\"".Length;
+        while (i0 < rawJson.Length && (rawJson[i0] == ' ' || rawJson[i0] == '\t')) i0++;
+        if (i0 >= rawJson.Length || rawJson[i0] != ':') return null;
+        i0++;
+        while (i0 < rawJson.Length && (rawJson[i0] == ' ' || rawJson[i0] == '\t')) i0++;
+        if (i0 >= rawJson.Length || rawJson[i0] != '"') return null;
+        var bodyStart = i0 + 1;
+        if (bodyStart >= rawJson.Length) return null;
+
+        // Walk forward, decoding JSON escapes, until we either hit a real
+        // unescaped closing quote (the normal terminator — but then the
+        // outer parser would have succeeded, so we wouldn't be here) OR
+        // we run off the end of the string mid-escape, which is the case
+        // we're rescuing.
+        var sb = new StringBuilder(rawJson.Length - bodyStart);
+        for (var i = bodyStart; i < rawJson.Length; i++)
+        {
+            var c = rawJson[i];
+            if (c == '"') break;   // properly closed — fall through to return
+            if (c == '\\')
+            {
+                if (i + 1 >= rawJson.Length) break;  // dangling backslash
+                var esc = rawJson[i + 1];
+                switch (esc)
+                {
+                    case '"': sb.Append('"'); i++; break;
+                    case '\\': sb.Append('\\'); i++; break;
+                    case '/': sb.Append('/'); i++; break;
+                    case 'b': sb.Append('\b'); i++; break;
+                    case 'f': sb.Append('\f'); i++; break;
+                    case 'n': sb.Append('\n'); i++; break;
+                    case 'r': sb.Append('\r'); i++; break;
+                    case 't': sb.Append('\t'); i++; break;
+                    case 'u':
+                        if (i + 5 >= rawJson.Length) return Result(sb);  // half-emitted \uXX
+                        var hex = rawJson.AsSpan(i + 2, 4);
+                        if (!ushort.TryParse(hex, System.Globalization.NumberStyles.HexNumber,
+                                             System.Globalization.CultureInfo.InvariantCulture, out var cp))
+                            return Result(sb);
+                        sb.Append((char)cp);
+                        i += 5;
+                        break;
+                    default:
+                        // Unknown escape — grammar shouldn't allow it, but
+                        // if it slipped through just stop and return what
+                        // we have.
+                        return Result(sb);
+                }
+            }
+            else
+            {
+                sb.Append(c);
+            }
+        }
+        return Result(sb);
+
+        static string? Result(StringBuilder sb)
+        {
+            var text = sb.ToString().TrimEnd();
+            return text.Length == 0 ? null : text;
+        }
+    }
 
     public ValueTask DisposeAsync()
     {
