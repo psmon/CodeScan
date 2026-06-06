@@ -67,53 +67,48 @@
     {
       "name": "psmon",
       "commits": 16,
-      "percent": 76.2
+      "percent": 66.7
     },
     {
       "name": "smpark-luna",
-      "commits": 3,
-      "percent": 14.3
+      "commits": 6,
+      "percent": 25
     },
     {
       "name": "smpark",
       "commits": 2,
-      "percent": 9.5
+      "percent": 8.3
     }
   ],
   "contributorsAll": [
     {
       "name": "psmon",
       "commits": 16,
-      "percent": 76.2
+      "percent": 66.7
     },
     {
       "name": "smpark-luna",
-      "commits": 3,
-      "percent": 14.3
+      "commits": 6,
+      "percent": 25
     },
     {
       "name": "smpark",
       "commits": 2,
-      "percent": 9.5
+      "percent": 8.3
     }
   ],
   "contributorsRecent": [
     {
       "name": "smpark-luna",
-      "commits": 3,
-      "percent": 60
-    },
-    {
-      "name": "smpark",
-      "commits": 2,
-      "percent": 40
+      "commits": 6,
+      "percent": 100
     }
   ],
   "contributorsWindowDays": 14,
   "commitStats": {
-    "totalAllTime": 21,
-    "last7d": 3,
-    "last30d": 21
+    "totalAllTime": 24,
+    "last7d": 6,
+    "last30d": 24
   },
   "topChangedFiles": [
     {
@@ -133,7 +128,7 @@
       "commits": 4
     },
     {
-      "path": "harness/knowledge/actor-model-cross-toolkit.md",
+      "path": "Home/harness-view/css/components.css",
       "commits": 2
     }
   ]

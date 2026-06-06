@@ -14,11 +14,19 @@
     "actor-toolkit-scout": 1,
     "graph-curator": 1,
     "semantic-bridge-architect": 2,
-    "tamer": 4,
+    "tamer": 5,
     "test-audit": 1,
     "test-sentinel": 4
   },
   "items": [
+    {
+      "category": "tamer",
+      "file": "harness/logs/tamer/2026-06-06-06-49-chatmode-runtime-log-audit.md",
+      "date": "2026-06-06",
+      "time": "06:49",
+      "title": "chatmode runtime log audit",
+      "size": 8645
+    },
     {
       "category": "graph-curator",
       "file": "harness/logs/graph-curator/2026-05-19-08-00-graph-edit-cli-foundation.md",
