@@ -105,6 +105,10 @@ public sealed class SourceUpdateService
 
         new HybridSourceGraphAnalyzer().Enrich(projectPath, sourceFiles);
 
+        // Parse every markdown file so headings + frontmatter are indexed.
+        foreach (var md in entries.Where(e => !e.IsDirectory && e.Extension == ".md"))
+            md.Markdown = MarkdownAnalyzer.Analyze(md.FullPath);
+
         // Step 3: Save to DB
         _log?.Invoke("[db] Saving scan results...");
 

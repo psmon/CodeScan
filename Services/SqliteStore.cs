@@ -756,6 +756,42 @@ public sealed class SqliteStore : IResultStore, IDisposable
             {
                 IndexForSearch(scanId, "file", entry.Name, "", entry.RelativePath);
             }
+
+            // Markdown: index body / frontmatter / headings and build a heading graph
+            // so md files get a real navigation map (file -> headings, file -> meta).
+            if (!entry.IsDirectory && entry.Markdown is { HasContent: true } md)
+            {
+                if (md.Body.Length > 0)
+                    IndexForSearch(scanId, "doc", entry.Name, md.Body, entry.RelativePath);
+                if (md.FrontMatter.Length > 0)
+                    IndexForSearch(scanId, "doc-meta", entry.Name, md.FrontMatter, entry.RelativePath);
+
+                foreach (var h in md.Headings)
+                {
+                    IndexForSearch(scanId, "heading", h.Text, h.Text, entry.RelativePath);
+
+                    var headingNodeId = UpsertGraphNode(
+                        scanId,
+                        $"heading:{entry.RelativePath}:{h.Line}",
+                        "heading",
+                        h.Text,
+                        entry.RelativePath,
+                        $"H{h.Level} L{h.Line}");
+                    InsertGraphEdge(scanId, entryNodeId, headingNodeId, "has_heading", $"H{h.Level}");
+                }
+
+                if (md.FrontMatter.Length > 0)
+                {
+                    var metaNodeId = UpsertGraphNode(
+                        scanId,
+                        $"doc-meta:{entry.RelativePath}",
+                        "doc-meta",
+                        entry.Name,
+                        entry.RelativePath,
+                        md.FrontMatter.Length > 240 ? md.FrontMatter[..240] : md.FrontMatter);
+                    InsertGraphEdge(scanId, entryNodeId, metaNodeId, "has_meta", "meta");
+                }
+            }
         }
 
         // Update project stats
@@ -774,7 +810,9 @@ public sealed class SqliteStore : IResultStore, IDisposable
         cmd.Parameters.AddWithValue("@c", content);
         cmd.ExecuteNonQuery();
 
-        IndexForSearch(scanId, "doc", Path.GetFileName(docPath), content, docPath);
+        // Note: search indexing of md content (doc/doc-meta/heading) is handled per-file
+        // in InsertScan for every markdown file. This method only records the project's
+        // representative doc (project_docs table + graph 'documents' edge).
 
         var projectId = GetProjectIdForScan(scanId);
         if (projectId > 0)

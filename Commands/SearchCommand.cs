@@ -78,6 +78,8 @@ public sealed class SearchCommand
                 "method" => "[METHOD]",
                 "file"   => "[FILE]  ",
                 "doc"    => "[DOC]   ",
+                "doc-meta" => "[META]  ",
+                "heading" => "[HEAD]  ",
                 "commit" => "[COMMIT]",
                 "comment" => "[COMMENT]",
                 _ => $"[{r.Type.ToUpper()}]"

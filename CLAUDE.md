@@ -52,6 +52,8 @@ Tests use inline string arrays as input, no external test fixtures.
 - **Centralized storage**: All data under `~/.codescan/` (db/, logs/), not the working directory. Managed by `AppPaths.cs`.
 - **Version auto-bump**: `version.txt` is incremented on each build via MSBuild task in `CodeScan.csproj`.
 - **Markdown always indexed**: `.md` files are always included even when `--include` filters are active.
+- **Markdown structure indexing**: Every `.md` file (not just the representative project doc) is parsed by `MarkdownAnalyzer` and indexed as three search types — `doc` (body), `doc-meta` (YAML frontmatter: tags/aliases/code/etc.), and `heading` (each `#`..`######`). Headings also become graph nodes (`file -[has_heading]-> heading`) so md files get a navigation map. `InsertProjectDoc` only records the representative doc (project_docs table + `documents` edge); it does not re-index search.
+- **Dot-folder exclusion**: Any directory whose name starts with `.` (`.git`, `.claude`, `.vs`, `.idea`, `.next`, ...) is excluded from scans. See `DirectoryScanner.IsDefaultExcluded`.
 - **Recent-first sorting**: Files/dirs sorted by modification time (newest first).
 - **Git root detection**: Walks directory tree for `.git/` folder — no subprocess spawned.
 - **Default exclusions**: `.git`, `.vs`, `.idea`, `bin`, `obj`, `node_modules`, `.next`, `dist`, `build`, `__pycache__`.

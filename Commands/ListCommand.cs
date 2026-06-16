@@ -25,6 +25,10 @@ public sealed class ListCommand
 
             var entries = scanner.Scan(path);
 
+            // Parse every markdown file (always) so headings + frontmatter are indexed.
+            foreach (var md in entries.Where(e => !e.IsDirectory && e.Extension == ".md"))
+                md.Markdown = MarkdownAnalyzer.Analyze(md.FullPath);
+
             if (options.Detail)
             {
                 var gitBlame = new GitBlameService(path);

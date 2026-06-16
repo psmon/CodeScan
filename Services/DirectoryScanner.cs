@@ -119,10 +119,13 @@ public sealed class DirectoryScanner
 
     private static bool IsDefaultExcluded(string dirName)
     {
-        return dirName is ".git" or ".vs" or ".idea"
-            or "bin" or "obj"
+        // Any dot-prefixed folder (.git, .claude, .vs, .idea, .next, ...) is excluded.
+        if (dirName.StartsWith('.'))
+            return true;
+
+        return dirName is "bin" or "obj"
             or "node_modules"
-            or ".next" or "dist" or "build"
+            or "dist" or "build"
             or "__pycache__";
     }
 
