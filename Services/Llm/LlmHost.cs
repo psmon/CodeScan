@@ -100,11 +100,31 @@ public sealed class LlmHost : IAsyncDisposable
             // auto-probe collapses to the CWD ('./runtimes/...'). codescan is on
             // PATH and run from arbitrary project dirs, so that path rarely holds
             // the natives and every backend load fails with a NativeApi throw.
-            // AppContext.BaseDirectory still resolves to the exe folder (where
-            // runtimes/ ships) even under single-file, so pin it explicitly.
+            //
+            // Two deploy layouts both need pinning:
+            //   • deploy-*.{ps1,sh}: runtimes/ ships loose beside the exe →
+            //     it lives at AppContext.BaseDirectory.
+            //   • release/npm (IncludeNativeLibrariesForSelfExtract=true): the
+            //     natives are embedded and the host extracts them to a temp
+            //     bundle dir (…/Temp/.net/codescan/<id>/) that is NOT
+            //     BaseDirectory. The host advertises that dir via the
+            //     NATIVE_DLL_SEARCH_DIRECTORIES AppContext entry, and the
+            //     extracted tree preserves runtimes/<rid>/native/…, so feeding
+            //     those dirs to LLamaSharp lets it find llama.dll there.
             try
             {
-                NativeLibraryConfig.All.WithSearchDirectory(AppContext.BaseDirectory);
+                var searchDirs = new List<string>();
+                if (AppContext.GetData("NATIVE_DLL_SEARCH_DIRECTORIES") is string ndd)
+                    searchDirs.AddRange(ndd.Split(Path.PathSeparator,
+                        StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+                searchDirs.Add(AppContext.BaseDirectory);
+
+                foreach (var dir in searchDirs
+                             .Where(d => !string.IsNullOrWhiteSpace(d))
+                             .Distinct(StringComparer.OrdinalIgnoreCase))
+                {
+                    NativeLibraryConfig.All.WithSearchDirectory(dir);
+                }
             }
             catch { /* search-dir config failure — fall back to default probe */ }
 
