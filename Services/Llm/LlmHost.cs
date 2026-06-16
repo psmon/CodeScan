@@ -96,6 +96,18 @@ public sealed class LlmHost : IAsyncDisposable
         {
             if (_nativeLogConfigured) return;
 
+            // Single-file publish leaves Assembly.Location empty, so LLamaSharp's
+            // auto-probe collapses to the CWD ('./runtimes/...'). codescan is on
+            // PATH and run from arbitrary project dirs, so that path rarely holds
+            // the natives and every backend load fails with a NativeApi throw.
+            // AppContext.BaseDirectory still resolves to the exe folder (where
+            // runtimes/ ships) even under single-file, so pin it explicitly.
+            try
+            {
+                NativeLibraryConfig.All.WithSearchDirectory(AppContext.BaseDirectory);
+            }
+            catch { /* search-dir config failure — fall back to default probe */ }
+
             var logPath = Path.Combine(Services.AppPaths.GetLogDir(), "llama-native.log");
             try
             {

@@ -79,12 +79,15 @@ class Program
             "project-update" => RunProjectUpdate(commandArgs),
             "project-delete" => RunProjectDelete(commandArgs),
             "tui" => RunTui(),
+            "ask" => RunAsk(commandArgs),
             "semantic" => RunSemantic(commandArgs),
             "graph-edit" => RunGraphEdit(commandArgs),
             "help" => RunHelp(commandArgs),
             _ => UnknownCommand(command)
         };
     }
+
+    static int RunAsk(string[] args) => new AskCommand().Execute(args);
 
     static int RunSemantic(string[] args) => new SemanticCommand().Execute(args);
 
@@ -529,6 +532,7 @@ class Program
             case "project-update": PrintProjectUpdateHelp(); break;
             case "project-delete": PrintProjectDeleteHelp(); break;
             case "tui": Console.WriteLine("  codescan tui - Interactive TUI mode."); break;
+            case "ask": AskCommand.PrintHelp(); break;
             default:
                 Console.WriteLine($"Unknown command: {args[0]}");
                 PrintHelp();
@@ -597,6 +601,7 @@ class Program
           project-update <id> [opts]   Update project fields (path, addinfo, source)
           project-delete <id>          Delete a project from DB
           tui                          Interactive TUI mode
+          ask "<question>"             Ask the on-device agent (non-interactive chat)
           semantic <sub>               Compiler-backed analysis via docker (Phase 1 PoC)
           graph-edit <sub>             Manually curate graph nodes/edges (LLM-friendly)
           help [command]               Show help
