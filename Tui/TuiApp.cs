@@ -698,6 +698,10 @@ public class MainView : Toplevel
 
         if (!_scanning) { AppendResult("\n-- Cancelled --\n"); FinishScan(); return; }
 
+        // Parse every markdown file so headings + frontmatter are indexed.
+        foreach (var md in entries.Where(e => !e.IsDirectory && e.Extension == ".md"))
+            md.Markdown = MarkdownAnalyzer.Analyze(md.FullPath);
+
         AppendResult("\n[3/3] Generating output...\n");
 
         var output = optTree
@@ -931,6 +935,8 @@ public class MainView : Toplevel
                 "method" => "[METHOD]",
                 "file"   => "[FILE]  ",
                 "doc"    => "[DOC]   ",
+                "doc-meta" => "[META]  ",
+                "heading" => "[HEAD]  ",
                 "commit"  => "[COMMIT]",
                 "comment" => "[COMMENT]",
                 _ => $"[{r.Type.ToUpper()}]"

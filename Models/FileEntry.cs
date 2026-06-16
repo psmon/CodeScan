@@ -12,4 +12,7 @@ public sealed class FileEntry
     public List<MethodEntry> Methods { get; set; } = [];
     public List<CommentBlock> Comments { get; set; } = [];
     public List<SourceDependency> Dependencies { get; set; } = [];
+
+    /// <summary>Parsed markdown structure (headings/frontmatter/body). Null for non-md files.</summary>
+    public MarkdownDoc? Markdown { get; set; }
 }

@@ -697,7 +697,7 @@ class Program
         Usage: codescan search <query> [options]
 
         Options:
-          -t, --type <type>      Filter by: method, file, doc, comment, commit
+          -t, --type <type>      Filter by: method, file, doc, doc-meta, heading, comment, commit
           -l, --limit <n>        Max results (default: 30)
           -p, --project <id>     Search within a specific project only
           --graph                Search graph nodes/edges instead of text index
@@ -709,6 +709,8 @@ class Program
           codescan search "HttpClient"
           codescan search "auth" --type method --limit 10
           codescan search "SSE" --type doc
+          codescan search "기간별 상담 통계" --type heading
+          codescan search "HUB-241" --type doc-meta
           codescan search "TODO" --project 1 --type comment
           codescan search "HttpClient" --graph --depth 2
           codescan search "MATCH (f:file)-[r:imports]->(m:module) LIMIT 20" --query
