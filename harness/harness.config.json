@@ -3,7 +3,7 @@
   "$schemaVersion": "1.0.0",
   "name": "CodeScan Harness",
   "description": "C# .NET AOT 소스코드 분석기(CodeScan)의 품질/구조 검수 및 워크플로우 오케스트레이션",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "agents": [
     "tamer",
     "regex-safety-guard",
@@ -12,9 +12,10 @@
     "language-analyzer-keeper",
     "actor-toolkit-scout",
     "semantic-bridge-architect",
-    "graph-curator"
+    "graph-curator",
+    "web-gui-design-reviewer"
   ],
-  "engine": ["test-audit", "actor-graph-extension"],
+  "engine": ["test-audit", "actor-graph-extension", "gui-design-review"],
   "created": "2026-05-17",
-  "lastUpdated": "2026-05-19"
+  "lastUpdated": "2026-06-21"
 }

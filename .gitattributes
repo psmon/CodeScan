@@ -1,5 +1,2 @@
-# Default
-* text=auto
-
-# Shell scripts must stay LF (Linux)
-*.sh text eol=lf
+# Pencil design files are binary (encrypted) — never normalize line endings
+*.pen binary
