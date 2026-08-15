@@ -1,3 +1,9 @@
+---
+name: 05-testforsampleproject
+type: doc
+anchor: none  # Prompt/ = 빌드 이력 프롬프트(설계-고아). 현재 코드 정책이 아니라 검사 면제.
+---
+
 이제 이 프로젝트의 핵심인 단순하게 reg가 아닌 의존성을 파악하는지 여부를 보강하기위해 다음 빌드가능한 샘플 프로젝트를 실제 만든후
 codescan 을해 graph 탐색이 가능한지? e2e 테스트를 강화하려고함
 

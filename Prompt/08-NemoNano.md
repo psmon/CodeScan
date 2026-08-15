@@ -1,3 +1,9 @@
+---
+name: 08-nemonano
+type: doc
+anchor: none  # Prompt/ = 빌드 이력 프롬프트(설계-고아). 현재 코드 정책이 아니라 검사 면제.
+---
+
 
 > ⚠️ **SUPERSEDED / 제거됨 (v0.12.0)** — 이 문서가 확장한 온디바이스 모델(Nemotron 3 Nano /
 > Gemma) 챗 기능은 CLI 경량화를 위해 **제거**되었습니다. 설계 이력으로만 보존됩니다.

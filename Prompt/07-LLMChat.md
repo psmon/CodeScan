@@ -1,3 +1,9 @@
+---
+name: 07-llmchat
+type: doc
+anchor: none  # Prompt/ = 빌드 이력 프롬프트(설계-고아). 현재 코드 정책이 아니라 검사 면제.
+---
+
 > ⚠️ **SUPERSEDED / 제거됨 (v0.12.0)** — 이 문서가 설계한 온디바이스 LLM 챗봇
 > (TUI ChatMode / `codescan ask`)은 CLI를 가볍게 유지하기 위해 **제거**되었습니다
 > (`LlmHost`/`ChatView`/`AskCommand` 등 코드에 더 이상 없음). 이 파일은 설계 이력으로만

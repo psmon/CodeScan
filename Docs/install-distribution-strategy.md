@@ -1,3 +1,11 @@
+---
+name: install-distribution-strategy
+type: doc
+domain: distribution
+governs: ["Services/AppPaths.cs", "packaging/**", "Script/**"]
+anchor: auto
+---
+
 # CodeScan 간편 설치 배포 전략 (v1 확정안)
 
 ## 문서 목적

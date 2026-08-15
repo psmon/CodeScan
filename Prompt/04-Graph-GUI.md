@@ -1,3 +1,9 @@
+---
+name: 04-graph-gui
+type: doc
+anchor: none  # Prompt/ = 빌드 이력 프롬프트(설계-고아). 현재 코드 정책이 아니라 검사 면제.
+---
+
 CodeScan 은 CLI와 TUI 두가지 인터페이스를제공
 - CLI : Command Line Interface
 - TUI : Text User Interface

@@ -1,3 +1,9 @@
+---
+name: 00-first
+type: doc
+anchor: none  # Prompt/ = 빌드 이력 프롬프트(설계-고아). 현재 코드 정책이 아니라 검사 면제.
+---
+
 # CodeScan - 프로젝트 요구사항 (Phase 0)
 
 ## 개요
