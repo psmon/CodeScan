@@ -19,6 +19,7 @@ Built as a single native AOT binary with .NET 10.0.
 - **Graph search** — Neo4j-style source knowledge graph in embedded SQLite, **incrementally reconciled** on rescan (relationships are re-aligned, not reset); edge weight = corroborating-scan evidence that decays when unobserved, and curated edges survive
 - **Cypher-like graph query** — Safe `MATCH ... WHERE ... LIMIT ...` subset with **variable-length paths** (`-[r*1..3]->`) and **actionable errors** that tell an AI how to rewrite an unsupported query
 - **Code↔doc graph** — Markdown headings that name a code class are linked to it (`mentions` edges), so the graph answers "which docs discuss this class"
+- **Orphan-doc detection** — `codescan doc-orphan` finds docs with no code link, classifies them (neglected / declared / intentional via frontmatter), and proposes `governs:` anchors so an AI can re-connect docs to the code they describe
 - **Hybrid dependency graphing** — Regex-first edges, plus optional **build-artifact harvest** (e.g. JVM `.class` inheritance, read with no toolchain) and language/project metadata probes
 - **Interactive TUI** — Terminal.Gui v2 interface for browsing, scanning, keyword search, graph search, and graph query
 - **Local web GUI** — Keyword/graph/query search with a 2D force-directed viewer (**drag-to-cluster magnet physics**, hubs sized by connection count), a **depth-lit 3D view** (Labels/Lines/Cluster toggles), and an **in-graph file preview**, on port 8085 by default
