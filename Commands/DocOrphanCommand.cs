@@ -47,29 +47,42 @@ public sealed class DocOrphanCommand
         var unlinked = _db.FindUnlinkedMarkdownDocs(projectId);
         var classLabels = _db.GetClassLabels(projectId);
 
-        var neglected = new List<(string Path, List<string> Candidates)>();
+        var neglected = new List<(string Path, List<string> Candidates, bool HasFrontmatter)>();
         var intentional = new List<string>();
         var declared = new List<string>();
 
         foreach (var rel in unlinked)
         {
-            var (anchor, hasGoverns, body) = ReadFrontmatterAndBody(root, rel);
+            var (anchor, hasGoverns, hasFrontmatter, body) = ReadFrontmatterAndBody(root, rel);
             if (string.Equals(anchor, "none", StringComparison.OrdinalIgnoreCase)) { intentional.Add(rel); continue; }
             if (hasGoverns) { declared.Add(rel); continue; }
-            neglected.Add((rel, CandidateClasses(body, classLabels)));
+            neglected.Add((rel, CandidateClasses(body, classLabels), hasFrontmatter));
         }
 
         Console.WriteLine($"=== Orphan doc scan — project #{projectId} ({unlinked.Count} md files with no code link) ===\n");
 
         Console.WriteLine($"NEGLECTED orphans ({neglected.Count}) — no `mentions`, no `governs`, no `anchor: none`:");
         if (neglected.Count == 0) Console.WriteLine("  (none)");
-        foreach (var (path, candidates) in neglected)
+        foreach (var (path, candidates, hasFrontmatter) in neglected)
         {
             Console.WriteLine($"  ✗ {path}");
             if (candidates.Count > 0)
+            {
                 Console.WriteLine($"      candidate classes in body → {string.Join(", ", candidates)}");
+                // Ready-to-apply proposal following the frontmatter schema.
+                var governs = "governs: [" + string.Join(", ", candidates.Select(c => $"\"{c}\"")) + "]";
+                if (hasFrontmatter)
+                    Console.WriteLine($"      FIX (add to existing frontmatter):  {governs}");
+                else
+                    Console.WriteLine($"      FIX (prepend frontmatter):  ---\\n{governs}\\nanchor: auto\\n---");
+            }
             else
-                Console.WriteLine("      no code-class names found in body (pure prose — consider `anchor: none` or manual link)");
+            {
+                Console.WriteLine("      no code-class names in body (pure prose)");
+                Console.WriteLine(hasFrontmatter
+                    ? "      FIX (add to existing frontmatter):  anchor: none"
+                    : "      FIX (prepend frontmatter):  ---\\nanchor: none\\n---");
+            }
         }
 
         if (showAll)
@@ -86,26 +99,32 @@ public sealed class DocOrphanCommand
 
         Console.WriteLine($"""
 
-            To re-connect a neglected orphan, an AI can:
-              1. Read the doc + a candidate class, confirm the doc governs it.
-              2. Declare it in frontmatter:  governs: ["Path/To/File.cs", "ClassName"]
-                 (or `anchor: none` if the doc is pure methodology).
-              3. Or add an explicit curated link:  codescan graph-edit add-edge ...
-            Strategy & CodeScan roadmap: harness/knowledge/doc-code-linkage.md
+            Re-connecting an orphan (AI + user approval):
+              • The graph is DERIVED — a DB-only edge is lost on the next scan. The
+                durable fix is the MD FRONTMATTER (source of truth); CodeScan then
+                parses `governs:` back into the graph on scan.
+              • Apply flow (see FIX lines above):
+                  frontmatter exists → add the `governs:` / `anchor:` field
+                  no frontmatter     → prepend a `--- ... ---` block, then add it
+              • Follow the frontmatter schema so edits stay consistent:
+                harness/knowledge/doc-code-linkage.md  (§ Frontmatter 템플릿)
+              • DB-only curation (codescan graph-edit) is for links NOT sourced from
+                a doc; prefer the frontmatter route for orphan docs.
             """);
         return 0;
     }
 
     // Read the YAML-ish frontmatter (anchor / governs) and the body after it.
-    private static (string? Anchor, bool HasGoverns, string Body) ReadFrontmatterAndBody(string? root, string relativePath)
+    private static (string? Anchor, bool HasGoverns, bool HasFrontmatter, string Body) ReadFrontmatterAndBody(string? root, string relativePath)
     {
-        if (string.IsNullOrEmpty(root)) return (null, false, "");
+        if (string.IsNullOrEmpty(root)) return (null, false, false, "");
         string text;
         try { text = File.ReadAllText(Path.Combine(root, relativePath)); }
-        catch { return (null, false, ""); }
+        catch { return (null, false, false, ""); }
 
         string? anchor = null;
         var hasGoverns = false;
+        var hasFrontmatter = false;
         var body = text;
 
         if (text.StartsWith("---"))
@@ -113,6 +132,7 @@ public sealed class DocOrphanCommand
             var end = text.IndexOf("\n---", 3, StringComparison.Ordinal);
             if (end > 0)
             {
+                hasFrontmatter = true;
                 var fm = text[3..end];
                 body = text[(end + 4)..];
                 foreach (var raw in fm.Split('\n'))
@@ -129,7 +149,7 @@ public sealed class DocOrphanCommand
                 }
             }
         }
-        return (anchor, hasGoverns, body);
+        return (anchor, hasGoverns, hasFrontmatter, body);
     }
 
     // Drop an inline YAML comment (`value  # note`) and trim.

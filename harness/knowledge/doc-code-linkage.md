@@ -114,6 +114,51 @@ governs: []
 - `semantic-analyzer-docker.md` — "도커 우선"에서 "**하베스트 우선, 도커 최후수단**"으로
   전략 역전을 반영(pivot 배너 + testsample-build 링크).
 
+## 6. Frontmatter 템플릿 & 속성 규칙 (CodeScan 특화)
+
+문서를 코드에 앵커하는 **표준 frontmatter**. AI가 이 템플릿을 보고 **일관되게** 수정한다.
+
+```yaml
+---
+name: <kebab-slug>                 # 필수. 파일명과 일치
+type: knowledge | agent | engine | doc   # 필수
+domain: build | parser | graph | design | semantic | actor | ...   # 선택
+description: <한 줄 요약>           # 권장
+governs: ["<glob>", "<path.cs>", "<ClassName>", "<pattern>"]  # 이 문서가 지배하는 코드
+anchor: auto | none                # auto=드리프트 검사 / none=의도된 설계-고아(검사 면제)
+---
+```
+
+**속성 규칙:**
+- **knowledge·agents 문서는** `governs`(비어있지 않음, `anchor: auto`) **또는** `anchor: none` **중 하나를 반드시** 가진다. 둘 다 없으면 = 방치 고아.
+- **`governs` 항목 형태** (혼용 가능):
+  - 파일 glob — `Services/Analyzers/**`
+  - 파일 경로 — `Services/SqliteStore.cs`
+  - 클래스명 — `SqliteStore` (doc-orphan이 본문에서 제시하는 후보)
+  - 패턴/토큰 — `[GeneratedRegex]`, `PublishAot`
+- **`anchor`**: `auto`=governed 코드 변경 시 문서 재검토 대상 / `none`=순수 방법론(Type C), 고아·stale 검사에서 제외.
+
+## 7. 재연결 정책 — DB만? MD 파일까지?
+
+**결론: MD frontmatter(원천)를 수정한다. DB만 넣으면 안 된다.**
+
+- 그래프 DB는 **스캔에서 재생성되는 파생물** → DB에만 앵커 엣지를 넣으면 **다음 스캔에서 소실**.
+  (예외: `graph-edit`의 `curated=1` 엣지는 재조정에서 보존되나, 이는 "문서에서 유래하지 않은"
+  수동 큐레이션용이다.)
+- 따라서 고아 문서의 durable한 수정 = **frontmatter `governs:`** → CodeScan이 스캔 시 이를
+  `doc -[governs]-> code` 엣지로 파싱(로드맵 §4-1). 소스가 진실, 그래프는 그 반영.
+
+**적용 플로우 (사용자 승인 후):**
+1. `codescan doc-orphan` 으로 방치 고아 + 본문 후보 클래스 + **FIX 제안** 확인.
+2. 문서가 정말 그 코드를 지배하는지 AI가 문서+코드를 읽어 확인.
+3. 적용:
+   - **frontmatter 있음** → 기존 블록에 `governs:` / `anchor:` **속성만 추가**.
+   - **frontmatter 없음** → 상단에 `--- ... ---` **블록을 생성한 뒤** 속성 추가.
+4. 재스캔 → 앵커가 그래프에 반영되고 고아에서 벗어남.
+
+> `doc-orphan`은 이 FIX를 **제안(dry-run)**만 한다. 실제 MD 편집은 AI가 위 스키마대로,
+> **사용자 승인**을 받아 수행한다. (자동 파일쓰기 없음 — 소스 변경은 사람이 승인)
+
 ## 관련
 - [[graph-reconciliation]] — 코드↔문서 `mentions`, 재조정
 - [[../.claude/skills/testsample-build/SKILL.md]] — 무빌드 하베스트(도커 대안)
