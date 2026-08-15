@@ -1122,6 +1122,11 @@ public sealed class SqliteStore : IResultStore, IDisposable
         depth = Math.Clamp(depth, 0, 4);
         limit = Math.Clamp(spec.Limit ?? limit, 1, 300);
 
+        // Variable-length paths (`-[r*1..N]->`) traverse via a recursive CTE and
+        // return the reachable subgraph directly — no per-hop neighbor expansion.
+        if (spec.HasVariableHops)
+            return QueryGraphVariableHops(spec, projectId, limit);
+
         var matchedIds = spec.HasEdge
             ? FindGraphQueryEdgeNodeIds(spec, projectId, limit)
             : FindGraphQueryNodeIds(spec, projectId, limit);
@@ -1144,6 +1149,94 @@ public sealed class SqliteStore : IResultStore, IDisposable
         var nodes = GetGraphNodes(selectedIds);
         var edges = GetGraphEdges(selectedIds, projectId);
 
+        return new GraphData { Nodes = nodes, Edges = edges };
+    }
+
+    /// <summary>
+    /// Execute a variable-length path pattern (<c>(a)-[r:kind*min..max]-&gt;(b)</c>)
+    /// with a recursive CTE: walk out from the seed (left) nodes along the edge
+    /// kind up to MaxHops, gate the result on at least one endpoint at hop depth
+    /// in [MinHops, MaxHops] matching the right pattern, then return the reachable
+    /// subgraph (active nodes + edges among them).
+    /// </summary>
+    private GraphData QueryGraphVariableHops(GraphQuerySpec spec, long? projectId, int limit)
+    {
+        using var cmd = _conn.CreateCommand();
+
+        // Seed = left pattern (scope + kind + left WHERE).
+        var seedWhere = new List<string>();
+        AddLatestNodeScope(seedWhere, "s", projectId);
+        if (!string.IsNullOrWhiteSpace(spec.LeftKind))
+            AddEquals(seedWhere, cmd, "s.kind", "@leftKind", spec.LeftKind);
+        AddGraphQueryConditions(seedWhere, cmd, spec,
+            new(StringComparer.OrdinalIgnoreCase) { [spec.LeftAlias] = "s" }, "@sq", skipUnknownAliases: true);
+
+        // Edge filter applied at every hop.
+        var edgeWhere = new List<string> { "e.state = 'active'" };
+        if (projectId.HasValue) edgeWhere.Add("e.project_id = @pid");
+        if (!string.IsNullOrWhiteSpace(spec.EdgeKind))
+            AddEquals(edgeWhere, cmd, "e.kind", "@edgeKind", spec.EdgeKind);
+
+        // Endpoint = right pattern (applied to reachable nodes at valid hop depth).
+        var endWhere = new List<string> { "m.state = 'active'" };
+        if (projectId.HasValue) endWhere.Add("m.project_id = @pid");
+        if (!string.IsNullOrWhiteSpace(spec.RightKind))
+            AddEquals(endWhere, cmd, "m.kind", "@rightKind", spec.RightKind);
+        AddGraphQueryConditions(endWhere, cmd, spec,
+            new(StringComparer.OrdinalIgnoreCase) { [spec.RightAlias] = "m" }, "@eq", skipUnknownAliases: true);
+
+        var projNode = projectId.HasValue ? "AND gn.project_id = @pid" : "";
+        cmd.CommandText = $"""
+            WITH RECURSIVE walk(id, depth) AS (
+                SELECT id, 0 FROM (
+                    SELECT s.id AS id FROM graph_nodes s
+                    WHERE {string.Join(" AND ", seedWhere)}
+                    LIMIT @seedCap
+                )
+                UNION
+                SELECT e.to_node_id, walk.depth + 1
+                FROM walk
+                JOIN graph_edges e ON e.from_node_id = walk.id
+                WHERE walk.depth < @maxHops AND {string.Join(" AND ", edgeWhere)}
+            ),
+            reach(id, d) AS (
+                SELECT w.id, MIN(w.depth) FROM walk w
+                JOIN graph_nodes gn ON gn.id = w.id
+                WHERE gn.state = 'active' {projNode}
+                GROUP BY w.id
+            ),
+            endpoints(id) AS (
+                SELECT r.id FROM reach r
+                JOIN graph_nodes m ON m.id = r.id
+                WHERE r.d BETWEEN @minHops AND @maxHops AND {string.Join(" AND ", endWhere)}
+            )
+            SELECT r.id, (SELECT COUNT(*) FROM endpoints) FROM reach r
+            ORDER BY r.d
+            LIMIT @cap
+            """;
+        cmd.Parameters.AddWithValue("@minHops", spec.MinHops);
+        cmd.Parameters.AddWithValue("@maxHops", spec.MaxHops);
+        cmd.Parameters.AddWithValue("@seedCap", 200);
+        cmd.Parameters.AddWithValue("@cap", Math.Min(limit * 4, 300));
+        if (projectId.HasValue) cmd.Parameters.AddWithValue("@pid", projectId.Value);
+
+        var reachable = new HashSet<long>();
+        long endpointCount = 0;
+        using (var reader = cmd.ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                reachable.Add(reader.GetInt64(0));
+                endpointCount = reader.GetInt64(1);
+            }
+        }
+
+        // No endpoint satisfied the right pattern within the hop range → no match.
+        if (endpointCount == 0 || reachable.Count == 0)
+            return new GraphData();
+
+        var nodes = GetGraphNodes(reachable);
+        var edges = GetGraphEdges(reachable, projectId);
         return new GraphData { Nodes = nodes, Edges = edges };
     }
 
@@ -1255,13 +1348,21 @@ public sealed class SqliteStore : IResultStore, IDisposable
         List<string> where,
         SqliteCommand cmd,
         GraphQuerySpec spec,
-        Dictionary<string, string> aliasMap)
+        Dictionary<string, string> aliasMap,
+        string paramPrefix = "@q",
+        bool skipUnknownAliases = false)
     {
         var i = 0;
         foreach (var condition in spec.Conditions)
         {
             if (!aliasMap.TryGetValue(condition.Alias, out var sqlAlias))
+            {
+                // Split passes (e.g. variable-hop seed vs endpoint) only own a
+                // subset of aliases; skip conditions handled by the other pass.
+                // Genuinely-unknown aliases were already rejected in Parse.
+                if (skipUnknownAliases) continue;
                 throw new GraphQueryParseException($"Unknown alias in WHERE: {condition.Alias}.");
+            }
 
             var column = condition.Field.ToLowerInvariant() switch
             {
@@ -1272,7 +1373,7 @@ public sealed class SqliteStore : IResultStore, IDisposable
                 _ => throw new GraphQueryParseException($"Unsupported field: {condition.Field}.")
             };
 
-            var parameter = $"@q{i++}";
+            var parameter = $"{paramPrefix}{i++}";
             switch (condition.Operator)
             {
                 case GraphQueryOperator.Equals:

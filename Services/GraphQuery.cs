@@ -13,6 +13,12 @@ public sealed class GraphQuerySpec
     public string? RightKind { get; init; }
     public List<GraphQueryCondition> Conditions { get; init; } = [];
     public int? Limit { get; init; }
+
+    // Variable-length path: `-[r:kind*1..3]->`. When true the edge is traversed
+    // repeatedly (MinHops..MaxHops) via a recursive CTE instead of a single join.
+    public bool HasVariableHops { get; init; }
+    public int MinHops { get; init; } = 1;
+    public int MaxHops { get; init; } = 1;
 }
 
 public sealed class GraphQueryCondition
@@ -56,12 +62,15 @@ public static partial class GraphQueryParser
         if (string.IsNullOrWhiteSpace(query))
             throw new GraphQueryParseException("Graph query is empty.");
 
+        // Structural pre-check: catch constructs the single-pattern regex would
+        // otherwise partially match (leaving the unsupported tail silently
+        // ignored), so the caller gets an actionable error instead of a wrong
+        // result.
+        RejectUnsupportedConstructs(query);
+
         var match = MatchPattern().Match(query);
         if (!match.Success)
-        {
-            throw new GraphQueryParseException(
-                "Unsupported graph query. Use: MATCH (n:kind) or MATCH (n:kind)-[r:edge]->(m:kind) WHERE n.label CONTAINS 'text' LIMIT 50");
-        }
+            ThrowUnsupportedPattern(query);   // always throws with actionable guidance
 
         var leftAlias = ValueOr(match, "leftAlias", "n");
         var edgeAlias = ValueOr(match, "edgeAlias", "r");
@@ -73,6 +82,8 @@ public static partial class GraphQueryParser
 
         ValidateConditions(conditions, leftAlias, hasEdge ? edgeAlias : null, hasEdge ? rightAlias : null);
 
+        var (hasHops, minHops, maxHops) = ParseHops(match);
+
         return new GraphQuerySpec
         {
             LeftAlias = leftAlias,
@@ -83,8 +94,89 @@ public static partial class GraphQueryParser
             RightAlias = rightAlias,
             RightKind = EmptyToNull(match.Groups["rightKind"].Value),
             Conditions = conditions,
-            Limit = limit
+            Limit = limit,
+            HasVariableHops = hasHops,
+            MinHops = minHops,
+            MaxHops = maxHops
         };
+    }
+
+    // Upper bound on variable-length traversal — keeps recursive CTEs cheap and
+    // an unbounded `*` from walking the whole graph.
+    public const int HopCap = 6;
+
+    // Interpret the `*`, `*N`, `*min..max`, `*..max`, `*min..` quantifier.
+    private static (bool has, int min, int max) ParseHops(Match match)
+    {
+        if (!match.Groups["hops"].Success) return (false, 1, 1);
+
+        var minStr = match.Groups["hopMin"].Value;
+        var maxStr = match.Groups["hopMax"].Value;
+        var hasRange = match.Groups["hopRange"].Success;
+        int? min = minStr.Length > 0 ? int.Parse(minStr) : null;
+        int? max = maxStr.Length > 0 ? int.Parse(maxStr) : null;
+
+        int lo, hi;
+        if (hasRange)          { lo = min ?? 1; hi = max ?? HopCap; }   // *min..max / *..max / *min..
+        else if (min.HasValue) { lo = min.Value; hi = min.Value; }      // *N  → exactly N
+        else                   { lo = 1; hi = HopCap; }                 // *   → 1..cap
+
+        lo = Math.Max(1, lo);
+        hi = Math.Min(HopCap, Math.Max(lo, hi));
+        return (true, lo, hi);
+    }
+
+    // A compact capability reference appended to every parse error, so an AI
+    // caller can see exactly what the CodeScan query subset supports and rewrite
+    // its query without guessing.
+    private static string SupportedGrammarHelp() =>
+        """
+        --- CodeScan graph query capabilities (a Cypher subset over the scanned graph) ---
+        Patterns:
+          MATCH (n:kind)
+          MATCH (a:kind)-[r:edge_kind]->(b:kind)
+          MATCH (a:kind)-[r:edge_kind*1..3]->(b:kind)   variable-length path, max 6 hops
+        Clauses:  [WHERE <cond> AND <cond> ...] [RETURN ...] [LIMIT n]
+        WHERE fields:     node = kind|label|path|detail ; edge = kind|label
+        WHERE operators:  =, CONTAINS, STARTS WITH, ENDS WITH   (join with AND only)
+        Node kinds: project directory file class method comment doc doc-meta heading author type module
+        Edge kinds: contains defines authored has_comment documents imports
+                    inherits_or_implements creates uses_type has_heading has_meta
+        Not supported — rewrite instead:
+          backward edges (<-[]-)        -> point the arrow forward, swap a/b
+          multi-segment ((a)->(b)->(c)) -> use *min..max, or query each segment
+          OR / NOT in WHERE             -> AND only, or run separate queries
+          numeric comparisons (>, <)    -> not available (e.g. weight can't be filtered)
+          property maps ({k:'v'})       -> move to WHERE (n.label = 'v')
+        """;
+
+    // Red-flag constructs that the single-relationship regex might partially
+    // match. Detected up front so the error is specific and the unsupported tail
+    // is never silently dropped.
+    private static void RejectUnsupportedConstructs(string query)
+    {
+        if (Regex.IsMatch(query, @"<\s*-"))
+            throw new GraphQueryParseException(
+                "Backward relationships (<-[...]-) are not supported. Point the arrow forward and swap the endpoints: rewrite (b)<-[r:kind]-(a) as (a)-[r:kind]->(b).\n\n"
+                + SupportedGrammarHelp());
+
+        if (Regex.Matches(query, @"-\s*\[").Count > 1)
+            throw new GraphQueryParseException(
+                "Multi-segment paths ((a)-[]->(b)-[]->(c)) are not supported. Use one variable-length hop — (a)-[r:kind*1..3]->(c) — or run each segment as its own query.\n\n"
+                + SupportedGrammarHelp());
+
+        if (query.Contains('{'))
+            throw new GraphQueryParseException(
+                "Inline property maps ((n {label:'x'})) are not supported. Move properties into a WHERE clause: MATCH (n:kind) WHERE n.label = 'x'.\n\n"
+                + SupportedGrammarHelp());
+    }
+
+    [System.Diagnostics.CodeAnalysis.DoesNotReturn]
+    private static void ThrowUnsupportedPattern(string query)
+    {
+        throw new GraphQueryParseException(
+            "Could not parse the MATCH pattern. Start from one of the supported shapes below and adjust.\n\n"
+            + SupportedGrammarHelp());
     }
 
     private static List<GraphQueryCondition> ParseConditions(string tail)
@@ -102,8 +194,18 @@ public static partial class GraphQueryParser
             var match = ConditionPattern().Match(part);
             if (!match.Success)
             {
+                if (Regex.IsMatch(part, @"\bOR\b|\bNOT\b", RegexOptions.IgnoreCase))
+                    throw new GraphQueryParseException(
+                        $"WHERE condition '{part}' uses OR/NOT, which are not supported. Combine conditions with AND only, or run separate queries and merge the results.\n\n"
+                        + SupportedGrammarHelp());
+
+                if (Regex.IsMatch(part, @"(>=|<=|<>|!=|>|<)"))
+                    throw new GraphQueryParseException(
+                        $"WHERE condition '{part}' uses a comparison operator, which is not supported. Only =, CONTAINS, STARTS WITH, ENDS WITH are available (numeric fields such as edge weight cannot be filtered).\n\n"
+                        + SupportedGrammarHelp());
+
                 throw new GraphQueryParseException(
-                    $"Unsupported WHERE condition: {part}. Supported operators: =, CONTAINS, STARTS WITH, ENDS WITH.");
+                    $"Unsupported WHERE condition: {part}.\n\n" + SupportedGrammarHelp());
             }
 
             list.Add(new GraphQueryCondition
@@ -126,13 +228,16 @@ public static partial class GraphQueryParser
             var isEdge = edgeAlias != null && condition.Alias.Equals(edgeAlias, StringComparison.OrdinalIgnoreCase);
 
             if (!isLeft && !isRight && !isEdge)
-                throw new GraphQueryParseException($"Unknown alias in WHERE: {condition.Alias}.");
+                throw new GraphQueryParseException(
+                    $"Unknown alias '{condition.Alias}' in WHERE — it must match an alias declared in MATCH.\n\n" + SupportedGrammarHelp());
 
             if ((isLeft || isRight) && !NodeFields.Contains(condition.Field))
-                throw new GraphQueryParseException($"Unsupported node field: {condition.Field}. Use kind, label, path, or detail.");
+                throw new GraphQueryParseException(
+                    $"Unsupported node field '{condition.Field}'. Use kind, label, path, or detail.\n\n" + SupportedGrammarHelp());
 
             if (isEdge && !EdgeFields.Contains(condition.Field))
-                throw new GraphQueryParseException($"Unsupported edge field: {condition.Field}. Use kind or label.");
+                throw new GraphQueryParseException(
+                    $"Unsupported edge field '{condition.Field}'. Use kind or label.\n\n" + SupportedGrammarHelp());
         }
     }
 
@@ -191,7 +296,7 @@ public static partial class GraphQueryParser
         return value;
     }
 
-    [GeneratedRegex(@"^\s*MATCH\s*\(\s*(?<leftAlias>[A-Za-z_]\w*)?\s*(?::\s*(?<leftKind>[\w-]+))?\s*\)\s*(?<edge>-\s*\[\s*(?<edgeAlias>[A-Za-z_]\w*)?\s*(?::\s*(?<edgeKind>[\w-]+))?\s*\]\s*(?:->|--)\s*\(\s*(?<rightAlias>[A-Za-z_]\w*)?\s*(?::\s*(?<rightKind>[\w-]+))?\s*\))?\s*(?<tail>.*)$", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"^\s*MATCH\s*\(\s*(?<leftAlias>[A-Za-z_]\w*)?\s*(?::\s*(?<leftKind>[\w-]+))?\s*\)\s*(?<edge>-\s*\[\s*(?<edgeAlias>[A-Za-z_]\w*)?\s*(?::\s*(?<edgeKind>[\w-]+))?\s*(?<hops>\*\s*(?<hopMin>\d*)\s*(?:(?<hopRange>\.\.)\s*(?<hopMax>\d*))?)?\s*\]\s*(?:->|--)\s*\(\s*(?<rightAlias>[A-Za-z_]\w*)?\s*(?::\s*(?<rightKind>[\w-]+))?\s*\))?\s*(?<tail>.*)$", RegexOptions.IgnoreCase)]
     private static partial Regex MatchPattern();
 
     [GeneratedRegex(@"\bLIMIT\s+(?<limit>\d+)\b", RegexOptions.IgnoreCase)]

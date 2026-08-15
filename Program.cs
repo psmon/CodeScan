@@ -732,6 +732,7 @@ class Program
           Supported pattern:
             MATCH (n:kind)
             MATCH (a:kind)-[r:edge_kind]->(b:kind)
+            MATCH (a:kind)-[r:edge_kind*1..3]->(b:kind)   variable-length path (max 6 hops)
 
           Supported WHERE fields:
             Node aliases: kind, label, path, detail
@@ -775,6 +776,12 @@ class Program
         Supported MATCH patterns:
           MATCH (n:kind)
           MATCH (a:kind)-[r:edge_kind]->(b:kind)
+          MATCH (a:kind)-[r:edge_kind*1..3]->(b:kind)   variable-length path (max 6 hops)
+
+        Variable-length hops (*):
+          *        1..6 (unbounded, capped)      *N      exactly N
+          *M..N    M to N                        *..N    1 to N       *M..   M to cap
+          Returns the reachable subgraph when at least one endpoint matches.
 
         Supported WHERE fields:
           Node aliases: kind, label, path, detail
@@ -806,6 +813,7 @@ class Program
           codescan query "MATCH (c:class)-[r:uses_type]->(t:type) WHERE t.label = 'HttpClient'"
           codescan query "MATCH (f:file)-[r:imports]->(m:module) WHERE m.label CONTAINS 'System.Net'"
           codescan query "MATCH (a:author)-[r:authored]->(m:method) WHERE a.label CONTAINS 'kim'" --depth 1
+          codescan query "MATCH (c:class)-[r*1..3]->(t:type) WHERE c.label = 'SqliteStore'"
         """);
     }
 

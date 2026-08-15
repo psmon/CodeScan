@@ -44,6 +44,43 @@ public class GraphQueryParserTests
             GraphQueryParser.Parse("MATCH (a:class)-[r:uses_type]->(b:type) WHERE r.path CONTAINS 'x'"));
     }
 
+    [Theory]
+    [InlineData("MATCH (a:class)-[r:uses_type*1..3]->(b:type)", 1, 3)]
+    [InlineData("MATCH (a:class)-[r:uses_type*2]->(b:type)", 2, 2)]      // exactly N
+    [InlineData("MATCH (a:class)-[r:uses_type*]->(b:type)", 1, 6)]        // unbounded → cap
+    [InlineData("MATCH (a:class)-[r:uses_type*..4]->(b:type)", 1, 4)]     // open lower
+    [InlineData("MATCH (a:class)-[r:uses_type*2..]->(b:type)", 2, 6)]     // open upper → cap
+    [InlineData("MATCH (a:class)-[r:uses_type*3..99]->(b:type)", 3, 6)]   // clamp to cap
+    public void Parse_VariableHops(string query, int expectedMin, int expectedMax)
+    {
+        var spec = GraphQueryParser.Parse(query);
+        Assert.True(spec.HasVariableHops);
+        Assert.True(spec.HasEdge);
+        Assert.Equal(expectedMin, spec.MinHops);
+        Assert.Equal(expectedMax, spec.MaxHops);
+    }
+
+    [Fact]
+    public void Parse_SingleHop_HasNoVariableHops()
+    {
+        var spec = GraphQueryParser.Parse("MATCH (a:class)-[r:uses_type]->(b:type)");
+        Assert.False(spec.HasVariableHops);
+    }
+
+    [Theory]
+    [InlineData("MATCH (b:type)<-[r:uses_type]-(a:class)", "Backward")]
+    [InlineData("MATCH (a:class)-[r:contains]->(b:file)-[s:defines]->(c:method)", "Multi-segment")]
+    [InlineData("MATCH (n {label:'x'})", "property maps")]
+    [InlineData("MATCH (c:class) WHERE c.label = 'A' OR c.label = 'B'", "OR/NOT")]
+    [InlineData("MATCH (a:class)-[r:uses_type]->(b:type) WHERE b.weight > 3", "comparison operator")]
+    public void Parse_UnsupportedConstructs_GiveActionableErrors(string query, string expectedHint)
+    {
+        var ex = Assert.Throws<GraphQueryParseException>(() => GraphQueryParser.Parse(query));
+        Assert.Contains(expectedHint, ex.Message);
+        // Every parse error carries the capability reference so an AI can self-correct.
+        Assert.Contains("CodeScan graph query capabilities", ex.Message);
+    }
+
     // Actor-model edges (T2): free-form EdgeKind means the parser accepts them
     // without code change. The canonical names live in EdgeKinds.
     [Theory]
