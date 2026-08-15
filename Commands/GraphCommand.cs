@@ -78,7 +78,10 @@ public sealed class GraphCommand
             {
                 labels.TryGetValue(e.From, out var from);
                 labels.TryGetValue(e.To, out var to);
-                Console.WriteLine($"  {from ?? e.From.ToString()} -[{e.Kind}]-> {to ?? e.To.ToString()}");
+                // Weight is corroborating-scan evidence; surface it when >1 so a
+                // strongly-established relationship reads as such.
+                var w = e.Weight > 1 ? $" ×{e.Weight}" : "";
+                Console.WriteLine($"  {from ?? e.From.ToString()} -[{e.Kind}{w}]-> {to ?? e.To.ToString()}");
             }
         }
     }

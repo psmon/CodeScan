@@ -924,7 +924,8 @@ public class MainView : Toplevel
         {
             labels.TryGetValue(e.From, out var from);
             labels.TryGetValue(e.To, out var to);
-            sb.AppendLine($"  {from ?? e.From.ToString()} -[{e.Kind}]-> {to ?? e.To.ToString()}");
+            var w = e.Weight > 1 ? $" ×{e.Weight}" : "";
+            sb.AppendLine($"  {from ?? e.From.ToString()} -[{e.Kind}{w}]-> {to ?? e.To.ToString()}");
         }
     }
 

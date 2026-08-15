@@ -878,17 +878,36 @@ public sealed class SqliteStore : IResultStore, IDisposable
         }
         else
         {
+            // Incremental: an auto edge missed this scan loses one unit of
+            // evidence (weight--). A well-corroborated edge therefore tolerates
+            // several consecutive misses before it retires, absorbing transient
+            // scan noise; a weight-1 edge retires on the first miss.
             cmd.CommandText = """
-                UPDATE graph_edges SET state = 'stale'
+                UPDATE graph_edges SET weight = weight - 1
                 WHERE project_id = @pid AND curated = 0 AND state = 'active'
                   AND (last_seen_scan IS NULL OR last_seen_scan < @sid)
                 """;
             cmd.ExecuteNonQuery();
 
             cmd.CommandText = """
+                UPDATE graph_edges SET state = 'stale'
+                WHERE project_id = @pid AND curated = 0 AND state = 'active'
+                  AND (last_seen_scan IS NULL OR last_seen_scan < @sid)
+                  AND weight <= 0
+                """;
+            cmd.ExecuteNonQuery();
+
+            // Retire an unobserved node only once no active edge still needs it,
+            // so a node kept alive by a surviving (still-decaying) edge stays
+            // visible and the active view never dangles.
+            cmd.CommandText = """
                 UPDATE graph_nodes SET state = 'stale'
                 WHERE project_id = @pid AND curated = 0 AND state = 'active'
                   AND (last_seen_scan IS NULL OR last_seen_scan < @sid)
+                  AND id NOT IN (
+                      SELECT from_node_id FROM graph_edges WHERE project_id = @pid AND state = 'active'
+                      UNION
+                      SELECT to_node_id FROM graph_edges WHERE project_id = @pid AND state = 'active')
                 """;
             cmd.ExecuteNonQuery();
         }
@@ -1195,7 +1214,7 @@ public sealed class SqliteStore : IResultStore, IDisposable
             JOIN graph_nodes n ON n.id = e.from_node_id
             JOIN graph_nodes m ON m.id = e.to_node_id
             WHERE {string.Join(" AND ", where)}
-            ORDER BY e.last_seen_scan DESC, e.kind, n.label, m.label
+            ORDER BY e.curated DESC, e.weight DESC, e.last_seen_scan DESC, e.kind, n.label, m.label
             LIMIT @lim
             """;
         cmd.Parameters.AddWithValue("@lim", limit);
@@ -1393,7 +1412,7 @@ public sealed class SqliteStore : IResultStore, IDisposable
             FROM graph_edges e
             WHERE e.state = 'active'
               AND e.from_node_id IN ({inClause}) AND e.to_node_id IN ({inClause}) {projectFilter}
-            ORDER BY e.last_seen_scan DESC, e.kind
+            ORDER BY e.curated DESC, e.weight DESC, e.last_seen_scan DESC, e.kind
             LIMIT 500
             """;
         if (projectId.HasValue) cmd.Parameters.AddWithValue("@pid", projectId.Value);
@@ -1478,8 +1497,10 @@ public sealed class SqliteStore : IResultStore, IDisposable
         return (long)cmd.ExecuteScalar()!;
     }
 
-    // Auto edge upsert. Re-observation reinforces weight (evidence strength,
-    // capped) and re-activates the edge; a curated edge's label is left intact.
+    // Auto edge upsert. weight is corroborating-scan count: reinforced by +1
+    // once per scan that observes the edge (repeats within a scan don't
+    // double-count, since last_seen_scan is already this scan), capped at 999.
+    // Re-observation re-activates the edge; a curated edge's label is left intact.
     private void InsertGraphEdge(long scanId, long fromNodeId, long toNodeId, string kind, string label)
     {
         if (fromNodeId <= 0 || toNodeId <= 0 || fromNodeId == toNodeId) return;
@@ -1491,8 +1512,8 @@ public sealed class SqliteStore : IResultStore, IDisposable
             ON CONFLICT(project_id, from_node_id, to_node_id, kind) DO UPDATE SET
                 label = CASE WHEN curated = 1 THEN label ELSE excluded.label END,
                 state = 'active',
-                last_seen_scan = excluded.last_seen_scan,
-                weight = MIN(weight + 1, 999)
+                weight = CASE WHEN last_seen_scan < excluded.last_seen_scan THEN MIN(weight + 1, 999) ELSE weight END,
+                last_seen_scan = excluded.last_seen_scan
             """;
         cmd.Parameters.AddWithValue("@pid", _graphProjectId);
         cmd.Parameters.AddWithValue("@sid", scanId);

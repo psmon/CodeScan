@@ -37,7 +37,9 @@ v1 그래프는 `graph_nodes UNIQUE(scan_id, stable_key)` 로 **scan_id에 종�
 - `state` — `'active'`(라이브) / `'stale'`(은퇴). 조회는 기본 active만 본다.
 - `first_seen_scan` / `last_seen_scan` — 관측 이력(재조정 기준).
 - `curated` — 1이면 사람/LLM 지식, 자동 재조정에서 **면제**.
-- `weight`(엣지) — 증거 강도. 재관측마다 `MIN(weight+1, 999)` 로 강화.
+- `weight`(엣지) — **확증한 스캔 수**(Phase 2). 관측한 스캔마다 +1(스캔당 1회,
+  같은 스캔 내 반복은 중복 집계 안 함), 상한 999. 미관측 스캔마다 -1로 **감쇠**,
+  0에서 은퇴. 조회는 `curated DESC, weight DESC` 로 **재정렬**(강한 관계 우선).
 
 ## 재조정 알고리즘 (3-way merge)
 
@@ -49,8 +51,12 @@ v1 그래프는 `graph_nodes UNIQUE(scan_id, stable_key)` 로 **scan_id에 종�
 |------|------|-----------|----------------|
 | 스캔 O / DB O | 유효 | UPDATE + last_seen 갱신 + weight 강화 | 동일 |
 | 스캔 O / DB X | 신규 | INSERT(first_seen=현재) | 동일 |
-| 스캔 X / DB O (auto) | 사라짐 | **soft-retire** `state='stale'` | **DELETE** (참조된 엔드포인트는 보존) |
+| 스캔 X / DB O (auto) | 사라짐 | **weight--**, 0에서 soft-retire `state='stale'` | **DELETE** (참조된 엔드포인트는 보존) |
 | 스캔 X / DB O (curated) | 지식 | **불가침** | **불가침** |
+
+증분 모드는 즉시 은퇴가 아니라 감쇠라, 여러 스캔에 걸쳐 확증된 엣지는 일시적
+누락(파싱 실패, 부분 스캔)을 **weight만큼 견딘다**. 노드는 활성 엣지가 하나도
+남지 않을 때만 은퇴시켜 활성 뷰가 dangling 되지 않게 한다.
 
 ## 두 스캔 모드
 
@@ -79,6 +85,7 @@ v1 그래프는 `graph_nodes UNIQUE(scan_id, stable_key)` 로 **scan_id에 종�
 
 - **Phase 1 (완료)** — 식별자 project-scope화 + 생명주기 + reconcile(2모드) +
   curated 보존 + weight 강화 + soft-retire.
-- **Phase 2** — 미관측 시 weight **감쇠**로 순위 자연 하락(흔들리는 관계 페이드아웃).
+- **Phase 2 (완료)** — weight = 확증 스캔 수(스캔당 1회 강화) + 미관측 시 **감쇠**로
+  일시적 누락 내성 + 고갈 시 은퇴 + 조회 **weight 순 재정렬** + 출력에 `×N` 노출.
 - **Phase 3** — 메서드 식별자를 **시그니처 기반**으로 승격해 파일 이동/리네임에도
   노드가 살아남게(관계 리바인딩), 오버로드 구분.

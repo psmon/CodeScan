@@ -38,7 +38,7 @@ Tests use inline string arrays as input, no external test fixtures.
 
 **Data flow**: `DirectoryScanner` traverses files → `SourceAnalyzer` extracts classes/methods → `CommentExtractor` extracts comments → `GitBlameService` enriches with blame data → `SqliteStore` persists to `~/.codescan/db/codescan-v2.db` (FTS5 indexed).
 
-**Graph reconcile (v2)**: the knowledge graph is project-scoped (identity = `(project_id, stable_key)`), not per-scan. A rescan reconciles in place — observed nodes/edges are upserted and reinforced (edge `weight`), vanished auto rows are soft-retired (`state='stale'`) in incremental mode or deleted in `--full` mode, and curated rows (`curated=1`) always survive. Schema epoch is the DB filename (`codescan-v2.db`); in-epoch migrations use `PRAGMA user_version`. See `harness/knowledge/graph-reconciliation.md`.
+**Graph reconcile (v2)**: the knowledge graph is project-scoped (identity = `(project_id, stable_key)`), not per-scan. A rescan reconciles in place — observed edges are reinforced (`weight` = corroborating-scan count), and vanished auto rows **decay** (`weight--`) each miss and soft-retire (`state='stale'`) only once depleted in incremental mode, or delete immediately in `--full` mode; curated rows (`curated=1`) always survive. Graph reads default to the active view and rank edges by `curated`, then `weight`. Schema epoch is the DB filename (`codescan-v2.db`); in-epoch migrations use `PRAGMA user_version`. See `harness/knowledge/graph-reconciliation.md`.
 
 **Key services**:
 - `SourceAnalyzer` / `CommentExtractor` — regex-based parsers for 7 languages (C#, Java, Kotlin, JS, TS, PHP, Python). All regexes use `[GeneratedRegex]` for AOT safety.
