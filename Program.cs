@@ -800,7 +800,8 @@ class Program
 
         Common edge kinds:
           contains, defines, authored, has_comment, documents,
-          imports, inherits_or_implements, creates, uses_type
+          imports, inherits_or_implements, creates, uses_type,
+          has_heading, has_meta, mentions (doc heading -> code class it names)
 
         Options:
           -p, --project <id>     Query within a specific project only
@@ -814,6 +815,7 @@ class Program
           codescan query "MATCH (f:file)-[r:imports]->(m:module) WHERE m.label CONTAINS 'System.Net'"
           codescan query "MATCH (a:author)-[r:authored]->(m:method) WHERE a.label CONTAINS 'kim'" --depth 1
           codescan query "MATCH (c:class)-[r*1..3]->(t:type) WHERE c.label = 'SqliteStore'"
+          codescan query "MATCH (h:heading)-[r:mentions]->(c:class) WHERE c.label = 'SqliteStore'"  # which docs discuss this class
         """);
     }
 

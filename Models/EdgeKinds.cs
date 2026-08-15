@@ -26,4 +26,10 @@ public static class EdgeKinds
 
     // --- virtual-actor (Orleans-style; lookup, not spawn) ---
     public const string Activates = "activates";                // caller -> virtual-actor type via GrainFactory.GetGrain<T>
+
+    // --- documentation (the code <-> doc bridge) ---
+    public const string Documents = "documents";    // project -> representative doc
+    public const string HasHeading = "has_heading"; // markdown file -> heading
+    public const string HasMeta = "has_meta";       // markdown file -> frontmatter
+    public const string Mentions = "mentions";      // doc heading -> code symbol it names by label
 }

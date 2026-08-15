@@ -87,5 +87,14 @@ v1 그래프는 `graph_nodes UNIQUE(scan_id, stable_key)` 로 **scan_id에 종�
   curated 보존 + weight 강화 + soft-retire.
 - **Phase 2 (완료)** — weight = 확증 스캔 수(스캔당 1회 강화) + 미관측 시 **감쇠**로
   일시적 누락 내성 + 고갈 시 은퇴 + 조회 **weight 순 재정렬** + 출력에 `×N` 노출.
-- **Phase 3** — 메서드 식별자를 **시그니처 기반**으로 승격해 파일 이동/리네임에도
-  노드가 살아남게(관계 리바인딩), 오버로드 구분.
+- **가변 홉 쿼리 (완료)** — `MATCH (a)-[r*min..max]->(b)` recursive CTE + 미지원
+  패턴에 정보성 오류(AI 자가수정용).
+- **Phase 3 (완료, 실험 기반 재정의)** — CLI 실전 테스트에서 "문서와 코드가 같은
+  그래프에 있으나 엣지로 연결 안 됨"이 최대 갭으로 드러나, **코드↔문서 다리**를
+  Phase 3로 채택: 헤딩이 프로젝트 클래스를 명명하면 `heading -[mentions]-> class`
+  자동 생성(`LinkDocMentions`, 대소문자 구분 완전일치, len≥4, 프로젝트 클래스 한정).
+  `mentions`는 노드 은퇴 keep-alive에서 제외 → 문서가 언급해도 사라진 코드는 은퇴.
+- **다음 후보** — (a) 메서드 시그니처 기반 식별자(이동/리네임 리바인딩·오버로드 구분,
+  단 `MethodEntry`에 파라미터/네임스페이스 추가 = 9개 분석기 작업 필요), (b) `mentions`
+  + stale 노드 + git 날짜를 묶은 `doc-stale` 명령(오래된 문서 리포트), (c) 쿼리 렌더링이
+  질의한 edge kind를 상단에 고정.

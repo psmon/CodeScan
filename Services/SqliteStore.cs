@@ -631,6 +631,13 @@ public sealed class SqliteStore : IResultStore, IDisposable
             $"Project #{projectId}");
         var pathNodeIds = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
 
+        // Collected during the build to link docs to code afterwards: project
+        // class nodes by (case-sensitive) label, and every heading node. A
+        // heading whose text names a class gets a `mentions` edge — the code<->doc
+        // bridge. Case-sensitive so 'List' the type never matches the word 'list'.
+        var classNodesByLabel = new Dictionary<string, long>(StringComparer.Ordinal);
+        var headingsForMentions = new List<(long Id, string Text)>();
+
         // Batch insert files + methods
         foreach (var entry in entries)
         {
@@ -699,6 +706,7 @@ public sealed class SqliteStore : IResultStore, IDisposable
                             entry.RelativePath,
                             $"Class in {entry.RelativePath}");
                         InsertGraphEdge(scanId, entryNodeId, classNodeId, "contains", "contains");
+                        classNodesByLabel[m.ClassName] = classNodeId;
                     }
 
                     // stable_key is scan-independent (no fileId / start line) so
@@ -775,6 +783,7 @@ public sealed class SqliteStore : IResultStore, IDisposable
                             entry.RelativePath,
                             $"Class in {entry.RelativePath}");
                         InsertGraphEdge(scanId, entryNodeId, fromNodeId, "contains", "contains");
+                        classNodesByLabel[dep.FromName] = fromNodeId;
                     }
 
                     var toNodeId = UpsertGraphNode(
@@ -818,6 +827,7 @@ public sealed class SqliteStore : IResultStore, IDisposable
                         entry.RelativePath,
                         $"H{h.Level} L{h.Line}");
                     InsertGraphEdge(scanId, entryNodeId, headingNodeId, "has_heading", $"H{h.Level}");
+                    headingsForMentions.Add((headingNodeId, h.Text));
                 }
 
                 if (md.FrontMatter.Length > 0)
@@ -834,6 +844,9 @@ public sealed class SqliteStore : IResultStore, IDisposable
             }
         }
 
+        // Bridge docs to code: link each heading to any project class it names.
+        LinkDocMentions(scanId, headingsForMentions, classNodesByLabel);
+
         // Update project stats
         UpdateProject(projectId, fileCount, dirCount, totalSize);
 
@@ -843,6 +856,51 @@ public sealed class SqliteStore : IResultStore, IDisposable
 
         tx.Commit();
         return scanId;
+    }
+
+    // Minimum token length for a heading word to be considered a code-symbol
+    // mention — short words ('the', 'API') are too collision-prone.
+    private const int MentionMinTokenLength = 4;
+
+    /// <summary>
+    /// Create <c>heading -[mentions]-> class</c> edges: the code&lt;-&gt;doc bridge.
+    /// A heading word that exactly (case-sensitively) equals a project class name
+    /// is treated as a mention, so "SqliteStore internals" links to the class.
+    /// Framework types (List, Dictionary) are intentionally not mention targets —
+    /// only project-defined classes, which are distinctive enough to match safely.
+    /// </summary>
+    private void LinkDocMentions(long scanId, List<(long Id, string Text)> headings, Dictionary<string, long> classesByLabel)
+    {
+        if (headings.Count == 0 || classesByLabel.Count == 0) return;
+
+        foreach (var (headingId, text) in headings)
+        {
+            foreach (var token in TokenizeWords(text))
+            {
+                if (classesByLabel.TryGetValue(token, out var classId) && classId != headingId)
+                    InsertGraphEdge(scanId, headingId, classId, EdgeKinds.Mentions, EdgeKinds.Mentions);
+            }
+        }
+    }
+
+    // Split text into identifier-like words (letters/digits/underscore) of at
+    // least MentionMinTokenLength characters. AOT-safe — no regex.
+    private static IEnumerable<string> TokenizeWords(string text)
+    {
+        var start = -1;
+        for (var i = 0; i <= text.Length; i++)
+        {
+            var isWord = i < text.Length && (char.IsLetterOrDigit(text[i]) || text[i] == '_');
+            if (isWord)
+            {
+                if (start < 0) start = i;
+            }
+            else if (start >= 0)
+            {
+                if (i - start >= MentionMinTokenLength) yield return text[start..i];
+                start = -1;
+            }
+        }
     }
 
     /// <summary>
@@ -897,17 +955,18 @@ public sealed class SqliteStore : IResultStore, IDisposable
                 """;
             cmd.ExecuteNonQuery();
 
-            // Retire an unobserved node only once no active edge still needs it,
-            // so a node kept alive by a surviving (still-decaying) edge stays
-            // visible and the active view never dangles.
+            // Retire an unobserved node only once no active *structural* edge
+            // still needs it. `mentions` edges (doc -> code) are excluded: a doc
+            // that names a class must not keep that class alive after it is gone
+            // from the source — otherwise removed code could never retire.
             cmd.CommandText = """
                 UPDATE graph_nodes SET state = 'stale'
                 WHERE project_id = @pid AND curated = 0 AND state = 'active'
                   AND (last_seen_scan IS NULL OR last_seen_scan < @sid)
                   AND id NOT IN (
-                      SELECT from_node_id FROM graph_edges WHERE project_id = @pid AND state = 'active'
+                      SELECT from_node_id FROM graph_edges WHERE project_id = @pid AND state = 'active' AND kind != 'mentions'
                       UNION
-                      SELECT to_node_id FROM graph_edges WHERE project_id = @pid AND state = 'active')
+                      SELECT to_node_id FROM graph_edges WHERE project_id = @pid AND state = 'active' AND kind != 'mentions')
                 """;
             cmd.ExecuteNonQuery();
         }

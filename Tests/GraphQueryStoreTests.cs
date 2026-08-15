@@ -117,4 +117,57 @@ public class GraphQueryStoreTests
             try { if (File.Exists(dbPath)) File.Delete(dbPath); } catch { }
         }
     }
+
+    [Fact]
+    public void Scan_LinksDocHeadingToCodeClass_ViaMentionsEdge()
+    {
+        var dbPath = Path.Combine(Path.GetTempPath(), $"codescan_test_{Guid.NewGuid():N}.db");
+        var tempDir = Path.Combine(Path.GetTempPath(), $"codescan_test_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            using var db = new SqliteStore(dbPath);
+            var projectId = db.UpsertProject(Path.GetFullPath(tempDir));
+            db.InsertScan(projectId,
+            [
+                // A code file defining the class SqliteStore.
+                new FileEntry
+                {
+                    FullPath = "Store.cs", RelativePath = "Store.cs", Name = "Store.cs",
+                    Size = 1, IsDirectory = false, Depth = 0,
+                    Methods = [ new MethodEntry { ClassName = "SqliteStore", MethodName = "Search", StartLine = 1, EndLine = 1 } ]
+                },
+                // A doc whose heading names that class, plus one that names nothing.
+                new FileEntry
+                {
+                    FullPath = "doc.md", RelativePath = "doc.md", Name = "doc.md",
+                    Size = 1, IsDirectory = false, Depth = 0,
+                    Markdown = new MarkdownDoc
+                    {
+                        Body = "SqliteStore internals",
+                        Headings =
+                        [
+                            new MarkdownHeading { Level = 1, Text = "SqliteStore internals", Line = 1 },
+                            new MarkdownHeading { Level = 2, Text = "unrelated prose here", Line = 5 }
+                        ]
+                    }
+                }
+            ]);
+
+            // The heading naming the class is bridged to it.
+            var g = db.QueryGraph("MATCH (h:heading)-[r:mentions]->(c:class) WHERE c.label = 'SqliteStore'");
+            Assert.Contains(g.Edges, e => e.Kind == "mentions");
+            Assert.Contains(g.Nodes, n => n.Kind == "heading" && n.Label == "SqliteStore internals");
+            Assert.Contains(g.Nodes, n => n.Kind == "class" && n.Label == "SqliteStore");
+
+            // The unrelated heading names no class, so it produces no mention.
+            Assert.DoesNotContain(g.Nodes, n => n.Kind == "heading" && n.Label == "unrelated prose here");
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, true); } catch { }
+            try { if (File.Exists(dbPath)) File.Delete(dbPath); } catch { }
+        }
+    }
 }
