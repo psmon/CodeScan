@@ -55,10 +55,10 @@ public sealed class GraphEditCommand
         var path = opts.GetValueOrDefault("p", "");
         var detail = opts.GetValueOrDefault("d", "");
 
-        if (!TryResolveScan(opts, out var scanId, out var projectId)) return 1;
+        if (!TryResolveScan(opts, out _, out var projectId)) return 1;
 
-        var nodeId = _db.UpsertCuratedNode(scanId, kind, label, path, detail);
-        Console.WriteLine($"✓ node #{nodeId}  [{kind}] {label}   (project #{projectId}, scan #{scanId}, curated=1)");
+        var nodeId = _db.UpsertCuratedNode(projectId, kind, label, path, detail);
+        Console.WriteLine($"✓ node #{nodeId}  [{kind}] {label}   (project #{projectId}, curated=1)");
         return 0;
     }
 
@@ -73,15 +73,15 @@ public sealed class GraphEditCommand
             return 1;
         }
 
-        if (!TryResolveScan(opts, out var scanId, out var projectId)) return 1;
+        if (!TryResolveScan(opts, out _, out var projectId)) return 1;
 
         var fromRef = positional[0];
         var toRef = positional[1];
         var kind = positional[2];
         var label = opts.GetValueOrDefault("l", kind);
 
-        if (!TryResolveNodeId(scanId, fromRef, out var fromId, "from") ||
-            !TryResolveNodeId(scanId, toRef, out var toId, "to"))
+        if (!TryResolveNodeId(projectId, fromRef, out var fromId, "from") ||
+            !TryResolveNodeId(projectId, toRef, out var toId, "to"))
             return 1;
 
         if (fromId == toId)
@@ -90,7 +90,7 @@ public sealed class GraphEditCommand
             return 1;
         }
 
-        var edgeId = _db.UpsertCuratedEdge(scanId, fromId, toId, kind, label);
+        var edgeId = _db.UpsertCuratedEdge(projectId, fromId, toId, kind, label);
         var from = _db.GetNode(fromId)!;
         var to = _db.GetNode(toId)!;
         Console.WriteLine($"✓ edge #{edgeId}  {from.Label} -[{kind}]-> {to.Label}   (project #{projectId}, curated=1, weight=1)");
@@ -108,17 +108,17 @@ public sealed class GraphEditCommand
             return 1;
         }
 
-        if (!TryResolveScan(opts, out var scanId, out var projectId)) return 1;
+        if (!TryResolveScan(opts, out _, out var projectId)) return 1;
 
         var fromRef = positional[0];
         var toRef = positional[1];
         var kind = positional[2];
 
-        if (!TryResolveNodeId(scanId, fromRef, out var fromId, "from") ||
-            !TryResolveNodeId(scanId, toRef, out var toId, "to"))
+        if (!TryResolveNodeId(projectId, fromRef, out var fromId, "from") ||
+            !TryResolveNodeId(projectId, toRef, out var toId, "to"))
             return 1;
 
-        var newWeight = _db.StrengthenEdge(scanId, fromId, toId, kind);
+        var newWeight = _db.StrengthenEdge(projectId, fromId, toId, kind);
         if (newWeight is null)
         {
             Console.Error.WriteLine($"No existing edge {fromRef} -[{kind}]-> {toRef}. Use `graph-edit add-edge` to create it first.");
@@ -225,13 +225,13 @@ public sealed class GraphEditCommand
             Console.Error.WriteLine("Usage: codescan graph-edit list-node-ids <label> [--project ID]");
             return 1;
         }
-        if (!TryResolveScan(opts, out var scanId, out _)) return 1;
+        if (!TryResolveScan(opts, out _, out var projectId)) return 1;
 
         var label = positional[0];
-        var ids = _db.FindNodeIdsByLabel(scanId, label);
+        var ids = _db.FindNodeIdsByLabel(projectId, label);
         if (ids.Count == 0)
         {
-            Console.WriteLine($"No nodes with label '{label}' in scan #{scanId}.");
+            Console.WriteLine($"No nodes with label '{label}' in project #{projectId}.");
             return 0;
         }
         Console.WriteLine($"{ids.Count} node(s) labeled '{label}':");
@@ -275,7 +275,7 @@ public sealed class GraphEditCommand
         return true;
     }
 
-    private bool TryResolveNodeId(long scanId, string reference, out long nodeId, string position)
+    private bool TryResolveNodeId(long projectId, string reference, out long nodeId, string position)
     {
         // Numeric reference is taken as a literal id.
         if (long.TryParse(reference, out nodeId))
@@ -286,20 +286,20 @@ public sealed class GraphEditCommand
                 Console.Error.WriteLine($"Error: {position} node #{nodeId} not found.");
                 return false;
             }
-            if (n.ScanId != scanId)
+            if (n.ProjectId != projectId)
             {
-                Console.Error.WriteLine($"Error: {position} node #{nodeId} belongs to scan #{n.ScanId}, not scan #{scanId}. " +
-                                        "Use --project to switch context, or recreate the node in this scan.");
+                Console.Error.WriteLine($"Error: {position} node #{nodeId} belongs to project #{n.ProjectId}, not project #{projectId}. " +
+                                        "Use --project to switch context, or recreate the node in this project.");
                 return false;
             }
             return true;
         }
 
         // Otherwise treat it as a label and require exactly one match.
-        var ids = _db.FindNodeIdsByLabel(scanId, reference);
+        var ids = _db.FindNodeIdsByLabel(projectId, reference);
         if (ids.Count == 0)
         {
-            Console.Error.WriteLine($"Error: no node labeled '{reference}' in scan #{scanId}. " +
+            Console.Error.WriteLine($"Error: no node labeled '{reference}' in project #{projectId}. " +
                                     $"Create it first: codescan graph-edit add-node <kind> '{reference}'");
             return false;
         }

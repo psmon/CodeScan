@@ -20,12 +20,20 @@ public static class AppPaths
         return SemanticDir;
     }
 
+    // Schema epoch is encoded in the DB file name. Backward-incompatible schema
+    // changes ship a new file (codescan.db → codescan-v2.db) instead of an
+    // in-place destructive migration, so the previous DB stays intact for
+    // rollback. Incremental, compatible migrations within an epoch are handled
+    // by PRAGMA user_version inside SqliteStore. v2 = project-scoped,
+    // incrementally reconciled graph.
+    public const string DbFileName = "codescan-v2.db";
+
     public static string DbPath
     {
         get
         {
             Directory.CreateDirectory(DbDir);
-            return Path.Combine(DbDir, "codescan.db");
+            return Path.Combine(DbDir, DbFileName);
         }
     }
 

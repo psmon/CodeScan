@@ -162,6 +162,15 @@ class Program
                 case "--detail":
                     options.Detail = true;
                     break;
+                case "--full" or "--rebuild":
+                    options.FullRebuild = true;
+                    break;
+                case "--mode" when i + 1 < args.Length:
+                    options.FullRebuild = args[++i].Equals("full", StringComparison.OrdinalIgnoreCase);
+                    break;
+                case "--incremental":
+                    options.FullRebuild = false;
+                    break;
                 default:
                     if (!args[i].StartsWith('-') && path == null)
                         path = args[i];
@@ -590,7 +599,7 @@ class Program
           --devmode      Also save results to ~/.codescan/logs/ as log files
 
         Data:
-          DB:   ~/.codescan/db/codescan.db
+          DB:   ~/.codescan/db/codescan-v2.db
           Logs: ~/.codescan/logs/
 
         Quick Start:
@@ -628,13 +637,17 @@ class Program
           -i, --include <exts>   Include extensions (comma-sep, e.g. .cs,.js)
           -e, --exclude <dirs>   Exclude directories (comma-sep, e.g. bin,obj)
           -d, --depth <n>        Max traversal depth
+          --full, --rebuild      Graph "from scratch": drop auto nodes/edges not
+                                 seen this scan (curated survive). Default is
+                                 incremental — reconcile & soft-retire instead.
           -h, --help             Show help
 
         Examples:
-          codescan scan                           Scan current directory
+          codescan scan                           Scan current directory (incremental)
           codescan scan D:\Code\MyProject         Scan specific path
           codescan scan ./src -i ".cs,.js"        Scan with extension filter
           codescan scan . --depth 3               Scan with depth limit
+          codescan scan . --full                  Rebuild the graph from scratch
 
         After scanning:
           codescan projects                       See all registered projects
@@ -657,10 +670,11 @@ class Program
           --tree                 Tree format output
           -s, --stats            Include file/size statistics
           --detail               Analyze class:method + git blame per source file
+          --full, --rebuild      Graph from scratch (default: incremental reconcile)
           -h, --help             Show help
 
         Notes:
-          Results are always saved to ~/.codescan/db/codescan.db (SQLite).
+          Results are always saved to ~/.codescan/db/codescan-v2.db (SQLite).
           .md files are always included even with --include filter.
           --detail shows last commit info when used in a git repository.
 

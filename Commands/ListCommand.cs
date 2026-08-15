@@ -67,7 +67,7 @@ public sealed class ListCommand
             if (_db != null)
             {
                 var projectId = _db.UpsertProject(Path.GetFullPath(path));
-                var scanId = _db.InsertScan(projectId, entries);
+                var scanId = _db.InsertScan(projectId, entries, options.FullRebuild);
 
                 var docPath = ProjectDocFinder.FindDoc(path);
                 if (docPath != null)
@@ -116,4 +116,8 @@ public sealed class ListOptions
     public bool Stats { get; set; }
     public bool Detail { get; set; }
     public bool Verbose { get; set; }
+    // Graph reconcile mode. false = incremental (default): re-observe & upsert,
+    // soft-retire what vanished, keep curated. true = full rebuild ("처음부터"):
+    // drop auto rows not seen this scan. Curated rows survive either way.
+    public bool FullRebuild { get; set; }
 }

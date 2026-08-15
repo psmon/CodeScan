@@ -7,6 +7,13 @@ public sealed class SqliteStore : IResultStore, IDisposable
 {
     private readonly SqliteConnection _conn;
 
+    // Ambient project scope for the auto-graph helpers (UpsertGraphNode /
+    // InsertGraphEdge). Set at the top of InsertScan / InsertProjectDoc, which
+    // run synchronously inside a single transaction, so these helpers can stamp
+    // project_id without threading it through every call site. Graph identity is
+    // (project_id, stable_key); scan_id is passed per-call for lifecycle stamps.
+    private long _graphProjectId;
+
     public SqliteStore(string? dbPath = null)
     {
         dbPath ??= AppPaths.DbPath;
@@ -87,34 +94,6 @@ public sealed class SqliteStore : IResultStore, IDisposable
             CREATE INDEX IF NOT EXISTS idx_methods_name ON methods(method_name);
             CREATE INDEX IF NOT EXISTS idx_methods_author ON methods(last_author);
             CREATE INDEX IF NOT EXISTS idx_files_ext ON files(extension);
-
-            CREATE TABLE IF NOT EXISTS graph_nodes (
-                id INTEGER PRIMARY KEY,
-                scan_id INTEGER NOT NULL REFERENCES scans(id),
-                kind TEXT NOT NULL,
-                stable_key TEXT NOT NULL,
-                label TEXT NOT NULL,
-                path TEXT,
-                detail TEXT,
-                UNIQUE(scan_id, stable_key)
-            );
-
-            CREATE TABLE IF NOT EXISTS graph_edges (
-                id INTEGER PRIMARY KEY,
-                scan_id INTEGER NOT NULL REFERENCES scans(id),
-                from_node_id INTEGER NOT NULL REFERENCES graph_nodes(id),
-                to_node_id INTEGER NOT NULL REFERENCES graph_nodes(id),
-                kind TEXT NOT NULL,
-                label TEXT,
-                UNIQUE(scan_id, from_node_id, to_node_id, kind)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_graph_nodes_scan ON graph_nodes(scan_id);
-            CREATE INDEX IF NOT EXISTS idx_graph_nodes_kind ON graph_nodes(kind);
-            CREATE INDEX IF NOT EXISTS idx_graph_nodes_label ON graph_nodes(label);
-            CREATE INDEX IF NOT EXISTS idx_graph_edges_scan ON graph_edges(scan_id);
-            CREATE INDEX IF NOT EXISTS idx_graph_edges_from ON graph_edges(from_node_id);
-            CREATE INDEX IF NOT EXISTS idx_graph_edges_to ON graph_edges(to_node_id);
             """;
         cmd.ExecuteNonQuery();
 
@@ -126,27 +105,10 @@ public sealed class SqliteStore : IResultStore, IDisposable
         }
         catch { /* column already exists */ }
 
-        // Migration: curated graph edges (v0.7.0). weight grows on `graph-edit
-        // strengthen`; curated=1 marks an edge a human/LLM added so future
-        // rescans can choose to keep it.
-        try
-        {
-            cmd.CommandText = "ALTER TABLE graph_edges ADD COLUMN weight INTEGER NOT NULL DEFAULT 1";
-            cmd.ExecuteNonQuery();
-        }
-        catch { /* column already exists */ }
-        try
-        {
-            cmd.CommandText = "ALTER TABLE graph_edges ADD COLUMN curated INTEGER NOT NULL DEFAULT 0";
-            cmd.ExecuteNonQuery();
-        }
-        catch { /* column already exists */ }
-        try
-        {
-            cmd.CommandText = "ALTER TABLE graph_nodes ADD COLUMN curated INTEGER NOT NULL DEFAULT 0";
-            cmd.ExecuteNonQuery();
-        }
-        catch { /* column already exists */ }
+        // Graph schema is version-gated (PRAGMA user_version). v2 makes the
+        // graph project-scoped and incrementally reconciled instead of a fresh
+        // per-scan snapshot. See harness/knowledge/graph-reconciliation.md.
+        MigrateGraphSchema(cmd);
 
         // FTS5 for full-text search (trigram tokenizer for Korean substring matching)
         try
@@ -172,6 +134,73 @@ public sealed class SqliteStore : IResultStore, IDisposable
                 cmd.ExecuteNonQuery();
             }
             catch { /* FTS5 not available */ }
+        }
+    }
+
+    // Current on-disk schema version, tracked via PRAGMA user_version.
+    //   0 = pre-versioning (either brand-new DB or a legacy scan-scoped graph)
+    //   2 = project-scoped, incrementally reconciled graph (v2)
+    private const long SchemaVersion = 2;
+
+    /// <summary>
+    /// Graph schema setup + in-epoch migration runner. The v2 epoch (project-
+    /// scoped, incrementally reconciled graph) lives in its own DB file
+    /// (<see cref="AppPaths.DbFileName"/>), so there is no backward migration
+    /// from the legacy scan-scoped schema — a v2 file always starts empty and is
+    /// populated by the next scan. PRAGMA user_version is retained so future
+    /// compatible changes within the v2 epoch can migrate stepwise.
+    /// </summary>
+    private void MigrateGraphSchema(SqliteCommand cmd)
+    {
+        cmd.CommandText = "PRAGMA user_version";
+        var userVersion = Convert.ToInt64(cmd.ExecuteScalar() ?? 0L);
+
+        cmd.CommandText = """
+            CREATE TABLE IF NOT EXISTS graph_nodes (
+                id INTEGER PRIMARY KEY,
+                project_id INTEGER NOT NULL REFERENCES projects(id),
+                kind TEXT NOT NULL,
+                stable_key TEXT NOT NULL,
+                label TEXT NOT NULL,
+                path TEXT,
+                detail TEXT,
+                curated INTEGER NOT NULL DEFAULT 0,
+                state TEXT NOT NULL DEFAULT 'active',
+                first_seen_scan INTEGER,
+                last_seen_scan INTEGER,
+                UNIQUE(project_id, stable_key)
+            );
+
+            CREATE TABLE IF NOT EXISTS graph_edges (
+                id INTEGER PRIMARY KEY,
+                project_id INTEGER NOT NULL REFERENCES projects(id),
+                from_node_id INTEGER NOT NULL REFERENCES graph_nodes(id),
+                to_node_id INTEGER NOT NULL REFERENCES graph_nodes(id),
+                kind TEXT NOT NULL,
+                label TEXT,
+                weight INTEGER NOT NULL DEFAULT 1,
+                curated INTEGER NOT NULL DEFAULT 0,
+                state TEXT NOT NULL DEFAULT 'active',
+                first_seen_scan INTEGER,
+                last_seen_scan INTEGER,
+                UNIQUE(project_id, from_node_id, to_node_id, kind)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_graph_nodes_project ON graph_nodes(project_id);
+            CREATE INDEX IF NOT EXISTS idx_graph_nodes_kind ON graph_nodes(kind);
+            CREATE INDEX IF NOT EXISTS idx_graph_nodes_label ON graph_nodes(label);
+            CREATE INDEX IF NOT EXISTS idx_graph_nodes_state ON graph_nodes(state);
+            CREATE INDEX IF NOT EXISTS idx_graph_edges_project ON graph_edges(project_id);
+            CREATE INDEX IF NOT EXISTS idx_graph_edges_from ON graph_edges(from_node_id);
+            CREATE INDEX IF NOT EXISTS idx_graph_edges_to ON graph_edges(to_node_id);
+            CREATE INDEX IF NOT EXISTS idx_graph_edges_state ON graph_edges(state);
+            """;
+        cmd.ExecuteNonQuery();
+
+        if (userVersion < SchemaVersion)
+        {
+            cmd.CommandText = $"PRAGMA user_version = {SchemaVersion}";
+            cmd.ExecuteNonQuery();
         }
     }
 
@@ -285,10 +314,10 @@ public sealed class SqliteStore : IResultStore, IDisposable
         cmd.Parameters.AddWithValue("@pid", projectId);
         try { cmd.ExecuteNonQuery(); } catch { /* FTS may not exist */ }
 
-        cmd.CommandText = "DELETE FROM graph_edges WHERE scan_id IN (SELECT id FROM scans WHERE project_id = @pid)";
+        cmd.CommandText = "DELETE FROM graph_edges WHERE project_id = @pid";
         cmd.ExecuteNonQuery();
 
-        cmd.CommandText = "DELETE FROM graph_nodes WHERE scan_id IN (SELECT id FROM scans WHERE project_id = @pid)";
+        cmd.CommandText = "DELETE FROM graph_nodes WHERE project_id = @pid";
         cmd.ExecuteNonQuery();
 
         // Delete comments -> methods -> files -> project_docs -> scans -> project
@@ -562,9 +591,17 @@ public sealed class SqliteStore : IResultStore, IDisposable
     // ========================
     // Scan storage
     // ========================
-    public long InsertScan(long projectId, List<FileEntry> entries)
+    /// <summary>
+    /// Persist a scan and reconcile the project graph.
+    /// <paramref name="fullRebuild"/> = false (incremental): observed nodes/edges
+    /// are upserted by stable_key and anything auto that vanished from source is
+    /// soft-retired (state='stale'). = true (from scratch): vanished auto rows are
+    /// hard-deleted. Curated (curated=1) rows always survive both modes.
+    /// </summary>
+    public long InsertScan(long projectId, List<FileEntry> entries, bool fullRebuild = false)
     {
         using var tx = _conn.BeginTransaction();
+        _graphProjectId = projectId;
 
         var fileCount = entries.Count(e => !e.IsDirectory);
         var dirCount = entries.Count(e => e.IsDirectory);
@@ -664,9 +701,12 @@ public sealed class SqliteStore : IResultStore, IDisposable
                         InsertGraphEdge(scanId, entryNodeId, classNodeId, "contains", "contains");
                     }
 
+                    // stable_key is scan-independent (no fileId / start line) so
+                    // the same method reconciles across scans even after edits
+                    // shift its line. Overloads collapse onto one node in Phase 1.
                     var methodNodeId = UpsertGraphNode(
                         scanId,
-                        $"method:{fileId}:{m.ClassName}:{m.MethodName}:{m.StartLine}",
+                        $"method:{entry.RelativePath}:{m.ClassName}:{m.MethodName}",
                         "method",
                         string.IsNullOrWhiteSpace(m.ClassName) ? m.MethodName : $"{m.ClassName}.{m.MethodName}",
                         entry.RelativePath,
@@ -711,7 +751,7 @@ public sealed class SqliteStore : IResultStore, IDisposable
 
                     var commentNodeId = UpsertGraphNode(
                         scanId,
-                        $"comment:{fileId}:{c.StartLine}",
+                        $"comment:{entry.RelativePath}:{c.StartLine}",
                         "comment",
                         $"Comment L{c.StartLine}",
                         entry.RelativePath,
@@ -772,7 +812,7 @@ public sealed class SqliteStore : IResultStore, IDisposable
 
                     var headingNodeId = UpsertGraphNode(
                         scanId,
-                        $"heading:{entry.RelativePath}:{h.Line}",
+                        $"heading:{entry.RelativePath}:{h.Text}",
                         "heading",
                         h.Text,
                         entry.RelativePath,
@@ -797,8 +837,61 @@ public sealed class SqliteStore : IResultStore, IDisposable
         // Update project stats
         UpdateProject(projectId, fileCount, dirCount, totalSize);
 
+        // Reconcile: retire (incremental) or drop (full rebuild) the auto rows
+        // that were not re-observed in this scan. Curated rows are untouched.
+        FinalizeReconcile(projectId, scanId, fullRebuild);
+
         tx.Commit();
         return scanId;
+    }
+
+    /// <summary>
+    /// Close out a scan's graph reconciliation. Auto (curated=0) rows whose
+    /// <c>last_seen_scan</c> is older than this scan disappeared from source:
+    /// incremental mode soft-retires them (state='stale', still on disk),
+    /// full-rebuild mode deletes them. Curated rows never retire; auto endpoints
+    /// still referenced by a surviving edge are kept for referential integrity.
+    /// </summary>
+    private void FinalizeReconcile(long projectId, long scanId, bool fullRebuild)
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.Parameters.AddWithValue("@pid", projectId);
+        cmd.Parameters.AddWithValue("@sid", scanId);
+
+        if (fullRebuild)
+        {
+            cmd.CommandText = """
+                DELETE FROM graph_edges
+                WHERE project_id = @pid AND curated = 0
+                  AND (last_seen_scan IS NULL OR last_seen_scan < @sid)
+                """;
+            cmd.ExecuteNonQuery();
+
+            cmd.CommandText = """
+                DELETE FROM graph_nodes
+                WHERE project_id = @pid AND curated = 0
+                  AND (last_seen_scan IS NULL OR last_seen_scan < @sid)
+                  AND id NOT IN (SELECT from_node_id FROM graph_edges WHERE project_id = @pid
+                                 UNION SELECT to_node_id FROM graph_edges WHERE project_id = @pid)
+                """;
+            cmd.ExecuteNonQuery();
+        }
+        else
+        {
+            cmd.CommandText = """
+                UPDATE graph_edges SET state = 'stale'
+                WHERE project_id = @pid AND curated = 0 AND state = 'active'
+                  AND (last_seen_scan IS NULL OR last_seen_scan < @sid)
+                """;
+            cmd.ExecuteNonQuery();
+
+            cmd.CommandText = """
+                UPDATE graph_nodes SET state = 'stale'
+                WHERE project_id = @pid AND curated = 0 AND state = 'active'
+                  AND (last_seen_scan IS NULL OR last_seen_scan < @sid)
+                """;
+            cmd.ExecuteNonQuery();
+        }
     }
 
     public void InsertProjectDoc(long scanId, string docPath, string content)
@@ -817,6 +910,7 @@ public sealed class SqliteStore : IResultStore, IDisposable
         var projectId = GetProjectIdForScan(scanId);
         if (projectId > 0)
         {
+            _graphProjectId = projectId;
             var project = GetProject(projectId);
             var projectNodeId = UpsertGraphNode(
                 scanId,
@@ -1053,7 +1147,7 @@ public sealed class SqliteStore : IResultStore, IDisposable
             SELECT n.id
             FROM graph_nodes n
             WHERE {string.Join(" AND ", where)}
-            ORDER BY n.scan_id DESC,
+            ORDER BY n.last_seen_scan DESC,
                      CASE n.kind
                         WHEN 'project' THEN 0
                         WHEN 'directory' THEN 1
@@ -1101,7 +1195,7 @@ public sealed class SqliteStore : IResultStore, IDisposable
             JOIN graph_nodes n ON n.id = e.from_node_id
             JOIN graph_nodes m ON m.id = e.to_node_id
             WHERE {string.Join(" AND ", where)}
-            ORDER BY e.scan_id DESC, e.kind, n.label, m.label
+            ORDER BY e.last_seen_scan DESC, e.kind, n.label, m.label
             LIMIT @lim
             """;
         cmd.Parameters.AddWithValue("@lim", limit);
@@ -1116,18 +1210,20 @@ public sealed class SqliteStore : IResultStore, IDisposable
         return ids.ToList();
     }
 
+    // Graph reads default to the live (state='active') view. Retired (stale)
+    // rows stay on disk for history but drop out of active queries.
     private static void AddLatestNodeScope(List<string> where, string alias, long? projectId)
     {
-        where.Add(projectId.HasValue
-            ? $"{alias}.scan_id = (SELECT MAX(id) FROM scans WHERE project_id = @pid)"
-            : $"{alias}.scan_id IN (SELECT MAX(id) FROM scans GROUP BY project_id)");
+        where.Add($"{alias}.state = 'active'");
+        if (projectId.HasValue)
+            where.Add($"{alias}.project_id = @pid");
     }
 
     private static void AddLatestEdgeScope(List<string> where, string alias, long? projectId)
     {
-        where.Add(projectId.HasValue
-            ? $"{alias}.scan_id = (SELECT MAX(id) FROM scans WHERE project_id = @pid)"
-            : $"{alias}.scan_id IN (SELECT MAX(id) FROM scans GROUP BY project_id)");
+        where.Add($"{alias}.state = 'active'");
+        if (projectId.HasValue)
+            where.Add($"{alias}.project_id = @pid");
     }
 
     private static void AddEquals(List<string> where, SqliteCommand cmd, string column, string parameter, string value)
@@ -1187,11 +1283,9 @@ public sealed class SqliteStore : IResultStore, IDisposable
         var ids = new List<long>();
         using var cmd = _conn.CreateCommand();
         var projectFilter = projectId.HasValue
-            ? "AND n.scan_id IN (SELECT id FROM scans WHERE project_id = @pid)"
+            ? "AND n.project_id = @pid"
             : "";
-        var latestFilter = projectId.HasValue
-            ? "AND n.scan_id = (SELECT MAX(id) FROM scans WHERE project_id = @pid)"
-            : "AND n.scan_id IN (SELECT MAX(id) FROM scans GROUP BY project_id)";
+        var latestFilter = "AND n.state = 'active'";
         var hasQuery = !string.IsNullOrWhiteSpace(query);
         var queryFilter = hasQuery
             ? "AND (n.label LIKE @q OR n.path LIKE @q OR n.detail LIKE @q OR n.kind LIKE @q)"
@@ -1200,7 +1294,7 @@ public sealed class SqliteStore : IResultStore, IDisposable
             SELECT n.id
             FROM graph_nodes n
             WHERE 1 = 1 {projectFilter} {latestFilter} {queryFilter}
-            ORDER BY n.scan_id DESC,
+            ORDER BY n.last_seen_scan DESC,
                      CASE n.kind
                         WHEN 'project' THEN 0
                         WHEN 'directory' THEN 1
@@ -1230,12 +1324,13 @@ public sealed class SqliteStore : IResultStore, IDisposable
         using var cmd = _conn.CreateCommand();
         var inClause = AddIdParameters(cmd, nodeIds, "@n");
         var projectFilter = projectId.HasValue
-            ? "AND e.scan_id IN (SELECT id FROM scans WHERE project_id = @pid)"
+            ? "AND e.project_id = @pid"
             : "";
         cmd.CommandText = $"""
             SELECT e.from_node_id, e.to_node_id
             FROM graph_edges e
-            WHERE (e.from_node_id IN ({inClause}) OR e.to_node_id IN ({inClause})) {projectFilter}
+            WHERE e.state = 'active'
+              AND (e.from_node_id IN ({inClause}) OR e.to_node_id IN ({inClause})) {projectFilter}
             LIMIT @lim
             """;
         cmd.Parameters.AddWithValue("@lim", limit * 2);
@@ -1259,10 +1354,10 @@ public sealed class SqliteStore : IResultStore, IDisposable
         using var cmd = _conn.CreateCommand();
         var inClause = AddIdParameters(cmd, nodeIds, "@id");
         cmd.CommandText = $"""
-            SELECT id, scan_id, kind, label, path, detail
+            SELECT id, project_id, kind, label, path, detail, state, last_seen_scan
             FROM graph_nodes
             WHERE id IN ({inClause})
-            ORDER BY scan_id DESC, kind, label
+            ORDER BY last_seen_scan DESC, kind, label
             """;
 
         using var reader = cmd.ExecuteReader();
@@ -1271,11 +1366,13 @@ public sealed class SqliteStore : IResultStore, IDisposable
             nodes.Add(new GraphNode
             {
                 Id = reader.GetInt64(0),
-                ScanId = reader.GetInt64(1),
+                ProjectId = reader.GetInt64(1),
                 Kind = reader.GetString(2),
                 Label = reader.GetString(3),
                 Path = reader.IsDBNull(4) ? "" : reader.GetString(4),
-                Detail = reader.IsDBNull(5) ? "" : reader.GetString(5)
+                Detail = reader.IsDBNull(5) ? "" : reader.GetString(5),
+                State = reader.IsDBNull(6) ? "active" : reader.GetString(6),
+                ScanId = reader.IsDBNull(7) ? 0 : reader.GetInt64(7)
             });
         }
         return nodes;
@@ -1289,13 +1386,14 @@ public sealed class SqliteStore : IResultStore, IDisposable
         using var cmd = _conn.CreateCommand();
         var inClause = AddIdParameters(cmd, nodeIds, "@id");
         var projectFilter = projectId.HasValue
-            ? "AND e.scan_id IN (SELECT id FROM scans WHERE project_id = @pid)"
+            ? "AND e.project_id = @pid"
             : "";
         cmd.CommandText = $"""
-            SELECT e.id, e.scan_id, e.from_node_id, e.to_node_id, e.kind, e.label
+            SELECT e.id, e.last_seen_scan, e.from_node_id, e.to_node_id, e.kind, e.label, e.weight
             FROM graph_edges e
-            WHERE e.from_node_id IN ({inClause}) AND e.to_node_id IN ({inClause}) {projectFilter}
-            ORDER BY e.scan_id DESC, e.kind
+            WHERE e.state = 'active'
+              AND e.from_node_id IN ({inClause}) AND e.to_node_id IN ({inClause}) {projectFilter}
+            ORDER BY e.last_seen_scan DESC, e.kind
             LIMIT 500
             """;
         if (projectId.HasValue) cmd.Parameters.AddWithValue("@pid", projectId.Value);
@@ -1306,11 +1404,12 @@ public sealed class SqliteStore : IResultStore, IDisposable
             edges.Add(new GraphEdge
             {
                 Id = reader.GetInt64(0),
-                ScanId = reader.GetInt64(1),
+                ScanId = reader.IsDBNull(1) ? 0 : reader.GetInt64(1),
                 From = reader.GetInt64(2),
                 To = reader.GetInt64(3),
                 Kind = reader.GetString(4),
-                Label = reader.IsDBNull(5) ? "" : reader.GetString(5)
+                Label = reader.IsDBNull(5) ? "" : reader.GetString(5),
+                Weight = reader.IsDBNull(6) ? 1 : reader.GetInt32(6)
             });
         }
         return edges;
@@ -1348,18 +1447,25 @@ public sealed class SqliteStore : IResultStore, IDisposable
         catch { /* FTS not available */ }
     }
 
+    // Auto (scan-derived) node upsert. Identity is (_graphProjectId, stableKey);
+    // re-observing an existing node refreshes its fields, re-activates it, and
+    // bumps last_seen_scan. curated and first_seen_scan are preserved on
+    // conflict so human/LLM curation and provenance survive the reconcile.
     private long UpsertGraphNode(long scanId, string stableKey, string kind, string label, string path, string detail)
     {
         using var cmd = _conn.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO graph_nodes(scan_id, kind, stable_key, label, path, detail)
-            VALUES(@sid, @kind, @key, @label, @path, @detail)
-            ON CONFLICT(scan_id, stable_key) DO UPDATE SET
+            INSERT INTO graph_nodes(project_id, kind, stable_key, label, path, detail, state, first_seen_scan, last_seen_scan)
+            VALUES(@pid, @kind, @key, @label, @path, @detail, 'active', @sid, @sid)
+            ON CONFLICT(project_id, stable_key) DO UPDATE SET
                 kind = excluded.kind,
                 label = excluded.label,
                 path = excluded.path,
-                detail = excluded.detail
+                detail = excluded.detail,
+                state = 'active',
+                last_seen_scan = excluded.last_seen_scan
             """;
+        cmd.Parameters.AddWithValue("@pid", _graphProjectId);
         cmd.Parameters.AddWithValue("@sid", scanId);
         cmd.Parameters.AddWithValue("@kind", kind);
         cmd.Parameters.AddWithValue("@key", stableKey);
@@ -1368,20 +1474,27 @@ public sealed class SqliteStore : IResultStore, IDisposable
         cmd.Parameters.AddWithValue("@detail", detail);
         cmd.ExecuteNonQuery();
 
-        cmd.CommandText = "SELECT id FROM graph_nodes WHERE scan_id = @sid AND stable_key = @key";
+        cmd.CommandText = "SELECT id FROM graph_nodes WHERE project_id = @pid AND stable_key = @key";
         return (long)cmd.ExecuteScalar()!;
     }
 
+    // Auto edge upsert. Re-observation reinforces weight (evidence strength,
+    // capped) and re-activates the edge; a curated edge's label is left intact.
     private void InsertGraphEdge(long scanId, long fromNodeId, long toNodeId, string kind, string label)
     {
         if (fromNodeId <= 0 || toNodeId <= 0 || fromNodeId == toNodeId) return;
 
         using var cmd = _conn.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO graph_edges(scan_id, from_node_id, to_node_id, kind, label)
-            VALUES(@sid, @from, @to, @kind, @label)
-            ON CONFLICT(scan_id, from_node_id, to_node_id, kind) DO NOTHING
+            INSERT INTO graph_edges(project_id, from_node_id, to_node_id, kind, label, weight, state, first_seen_scan, last_seen_scan)
+            VALUES(@pid, @from, @to, @kind, @label, 1, 'active', @sid, @sid)
+            ON CONFLICT(project_id, from_node_id, to_node_id, kind) DO UPDATE SET
+                label = CASE WHEN curated = 1 THEN label ELSE excluded.label END,
+                state = 'active',
+                last_seen_scan = excluded.last_seen_scan,
+                weight = MIN(weight + 1, 999)
             """;
+        cmd.Parameters.AddWithValue("@pid", _graphProjectId);
         cmd.Parameters.AddWithValue("@sid", scanId);
         cmd.Parameters.AddWithValue("@from", fromNodeId);
         cmd.Parameters.AddWithValue("@to", toNodeId);
@@ -1419,23 +1532,28 @@ public sealed class SqliteStore : IResultStore, IDisposable
         return result is long v ? v : null;
     }
 
-    public long UpsertCuratedNode(long scanId, string kind, string label, string path, string detail)
+    public long UpsertCuratedNode(long projectId, string kind, string label, string path, string detail)
     {
         // Stable key for curated nodes is "curated:<kind>:<label>" so the same
-        // logical node is re-found across operations.
+        // logical node is re-found across operations. Curated nodes are
+        // project-scoped and immune to auto-reconcile retirement.
         var stableKey = $"curated:{kind}:{label}";
+        var sid = GetLatestScanId(projectId) ?? 0;
         using var cmd = _conn.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO graph_nodes(scan_id, kind, stable_key, label, path, detail, curated)
-            VALUES(@sid, @kind, @key, @label, @path, @detail, 1)
-            ON CONFLICT(scan_id, stable_key) DO UPDATE SET
+            INSERT INTO graph_nodes(project_id, kind, stable_key, label, path, detail, curated, state, first_seen_scan, last_seen_scan)
+            VALUES(@pid, @kind, @key, @label, @path, @detail, 1, 'active', @sid, @sid)
+            ON CONFLICT(project_id, stable_key) DO UPDATE SET
                 kind = excluded.kind,
                 label = excluded.label,
                 path = excluded.path,
                 detail = excluded.detail,
-                curated = 1
+                curated = 1,
+                state = 'active',
+                last_seen_scan = excluded.last_seen_scan
             """;
-        cmd.Parameters.AddWithValue("@sid", scanId);
+        cmd.Parameters.AddWithValue("@pid", projectId);
+        cmd.Parameters.AddWithValue("@sid", sid);
         cmd.Parameters.AddWithValue("@kind", kind);
         cmd.Parameters.AddWithValue("@key", stableKey);
         cmd.Parameters.AddWithValue("@label", label);
@@ -1443,21 +1561,21 @@ public sealed class SqliteStore : IResultStore, IDisposable
         cmd.Parameters.AddWithValue("@detail", detail);
         cmd.ExecuteNonQuery();
 
-        cmd.CommandText = "SELECT id FROM graph_nodes WHERE scan_id = @sid AND stable_key = @key";
+        cmd.CommandText = "SELECT id FROM graph_nodes WHERE project_id = @pid AND stable_key = @key";
         return (long)cmd.ExecuteScalar()!;
     }
 
     /// <summary>
-    /// Resolve a label to existing node ids within a scan. Returns all matches —
-    /// the caller decides how to pick (graph-edit prints them so the user can
-    /// disambiguate by id).
+    /// Resolve a label to existing active node ids within a project. Returns all
+    /// matches — the caller decides how to pick (graph-edit prints them so the
+    /// user can disambiguate by id).
     /// </summary>
-    public List<long> FindNodeIdsByLabel(long scanId, string label)
+    public List<long> FindNodeIdsByLabel(long projectId, string label)
     {
         var list = new List<long>();
         using var cmd = _conn.CreateCommand();
-        cmd.CommandText = "SELECT id FROM graph_nodes WHERE scan_id = @sid AND label = @label ORDER BY id";
-        cmd.Parameters.AddWithValue("@sid", scanId);
+        cmd.CommandText = "SELECT id FROM graph_nodes WHERE project_id = @pid AND state = 'active' AND label = @label ORDER BY id";
+        cmd.Parameters.AddWithValue("@pid", projectId);
         cmd.Parameters.AddWithValue("@label", label);
         using var r = cmd.ExecuteReader();
         while (r.Read()) list.Add(r.GetInt64(0));
@@ -1467,35 +1585,40 @@ public sealed class SqliteStore : IResultStore, IDisposable
     public GraphNode? GetNode(long nodeId)
     {
         using var cmd = _conn.CreateCommand();
-        cmd.CommandText = "SELECT id, scan_id, kind, label, path, detail FROM graph_nodes WHERE id = @id";
+        cmd.CommandText = "SELECT id, project_id, kind, label, path, detail, state, last_seen_scan FROM graph_nodes WHERE id = @id";
         cmd.Parameters.AddWithValue("@id", nodeId);
         using var r = cmd.ExecuteReader();
         if (!r.Read()) return null;
         return new GraphNode
         {
             Id = r.GetInt64(0),
-            ScanId = r.GetInt64(1),
+            ProjectId = r.GetInt64(1),
             Kind = r.GetString(2),
             Label = r.GetString(3),
             Path = r.IsDBNull(4) ? "" : r.GetString(4),
             Detail = r.IsDBNull(5) ? "" : r.GetString(5),
+            State = r.IsDBNull(6) ? "active" : r.GetString(6),
+            ScanId = r.IsDBNull(7) ? 0 : r.GetInt64(7),
         };
     }
 
-    public long UpsertCuratedEdge(long scanId, long fromNodeId, long toNodeId, string kind, string label)
+    public long UpsertCuratedEdge(long projectId, long fromNodeId, long toNodeId, string kind, string label)
     {
         if (fromNodeId <= 0 || toNodeId <= 0 || fromNodeId == toNodeId)
             throw new ArgumentException("from/to node ids must be positive and distinct.");
 
+        var sid = GetLatestScanId(projectId) ?? 0;
         using var cmd = _conn.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO graph_edges(scan_id, from_node_id, to_node_id, kind, label, weight, curated)
-            VALUES(@sid, @from, @to, @kind, @label, 1, 1)
-            ON CONFLICT(scan_id, from_node_id, to_node_id, kind) DO UPDATE SET
+            INSERT INTO graph_edges(project_id, from_node_id, to_node_id, kind, label, weight, curated, state, first_seen_scan, last_seen_scan)
+            VALUES(@pid, @from, @to, @kind, @label, 1, 1, 'active', @sid, @sid)
+            ON CONFLICT(project_id, from_node_id, to_node_id, kind) DO UPDATE SET
                 label = excluded.label,
-                curated = 1
+                curated = 1,
+                state = 'active'
             """;
-        cmd.Parameters.AddWithValue("@sid", scanId);
+        cmd.Parameters.AddWithValue("@pid", projectId);
+        cmd.Parameters.AddWithValue("@sid", sid);
         cmd.Parameters.AddWithValue("@from", fromNodeId);
         cmd.Parameters.AddWithValue("@to", toNodeId);
         cmd.Parameters.AddWithValue("@kind", kind);
@@ -1504,7 +1627,7 @@ public sealed class SqliteStore : IResultStore, IDisposable
 
         cmd.CommandText = """
             SELECT id FROM graph_edges
-            WHERE scan_id = @sid AND from_node_id = @from AND to_node_id = @to AND kind = @kind
+            WHERE project_id = @pid AND from_node_id = @from AND to_node_id = @to AND kind = @kind
             """;
         return (long)cmd.ExecuteScalar()!;
     }
@@ -1514,15 +1637,15 @@ public sealed class SqliteStore : IResultStore, IDisposable
     /// weight, or null if the edge does not exist (caller decides whether to
     /// fall back to add-edge).
     /// </summary>
-    public int? StrengthenEdge(long scanId, long fromNodeId, long toNodeId, string kind)
+    public int? StrengthenEdge(long projectId, long fromNodeId, long toNodeId, string kind)
     {
         using var cmd = _conn.CreateCommand();
         cmd.CommandText = """
             UPDATE graph_edges
-            SET weight = weight + 1, curated = 1
-            WHERE scan_id = @sid AND from_node_id = @from AND to_node_id = @to AND kind = @kind
+            SET weight = weight + 1, curated = 1, state = 'active'
+            WHERE project_id = @pid AND from_node_id = @from AND to_node_id = @to AND kind = @kind
             """;
-        cmd.Parameters.AddWithValue("@sid", scanId);
+        cmd.Parameters.AddWithValue("@pid", projectId);
         cmd.Parameters.AddWithValue("@from", fromNodeId);
         cmd.Parameters.AddWithValue("@to", toNodeId);
         cmd.Parameters.AddWithValue("@kind", kind);
@@ -1531,7 +1654,7 @@ public sealed class SqliteStore : IResultStore, IDisposable
 
         cmd.CommandText = """
             SELECT weight FROM graph_edges
-            WHERE scan_id = @sid AND from_node_id = @from AND to_node_id = @to AND kind = @kind
+            WHERE project_id = @pid AND from_node_id = @from AND to_node_id = @to AND kind = @kind
             """;
         return Convert.ToInt32(cmd.ExecuteScalar()!);
     }

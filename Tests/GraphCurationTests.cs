@@ -45,10 +45,10 @@ public class GraphCurationTests : IDisposable
     [Fact]
     public void AddNode_IsCurated_AndRetrievableById()
     {
-        var (db, _, scanId) = SetupScan();
+        var (db, projectId, _) = SetupScan();
         using var _ = db;
 
-        var nodeId = db.UpsertCuratedNode(scanId, "class", "CacheLayer", "Services/Cache.cs", "abstract cache");
+        var nodeId = db.UpsertCuratedNode(projectId, "class", "CacheLayer", "Services/Cache.cs", "abstract cache");
 
         var node = db.GetNode(nodeId);
         Assert.NotNull(node);
@@ -60,11 +60,11 @@ public class GraphCurationTests : IDisposable
     [Fact]
     public void AddNode_TwiceWithSameKindAndLabel_ReturnsSameId()
     {
-        var (db, _, scanId) = SetupScan();
+        var (db, projectId, _) = SetupScan();
         using var _ = db;
 
-        var first = db.UpsertCuratedNode(scanId, "class", "Foo", "", "");
-        var second = db.UpsertCuratedNode(scanId, "class", "Foo", "", "");
+        var first = db.UpsertCuratedNode(projectId,"class", "Foo", "", "");
+        var second = db.UpsertCuratedNode(projectId,"class", "Foo", "", "");
 
         Assert.Equal(first, second);
     }
@@ -72,29 +72,29 @@ public class GraphCurationTests : IDisposable
     [Fact]
     public void AddEdge_BetweenTwoCuratedNodes_IsCreatedWithWeightOne()
     {
-        var (db, _, scanId) = SetupScan();
+        var (db, projectId, _) = SetupScan();
         using var _ = db;
 
-        var fromId = db.UpsertCuratedNode(scanId, "class", "A", "", "");
-        var toId = db.UpsertCuratedNode(scanId, "class", "B", "", "");
+        var fromId = db.UpsertCuratedNode(projectId,"class", "A", "", "");
+        var toId = db.UpsertCuratedNode(projectId,"class", "B", "", "");
 
-        var edgeId = db.UpsertCuratedEdge(scanId, fromId, toId, "inherits_or_implements", "human-added");
+        var edgeId = db.UpsertCuratedEdge(projectId,fromId, toId, "inherits_or_implements", "human-added");
         Assert.True(edgeId > 0);
     }
 
     [Fact]
     public void Strengthen_OnExistingEdge_IncrementsWeight()
     {
-        var (db, _, scanId) = SetupScan();
+        var (db, projectId, _) = SetupScan();
         using var _ = db;
 
-        var fromId = db.UpsertCuratedNode(scanId, "class", "A", "", "");
-        var toId = db.UpsertCuratedNode(scanId, "class", "B", "", "");
-        db.UpsertCuratedEdge(scanId, fromId, toId, "uses_type", "");
+        var fromId = db.UpsertCuratedNode(projectId,"class", "A", "", "");
+        var toId = db.UpsertCuratedNode(projectId,"class", "B", "", "");
+        db.UpsertCuratedEdge(projectId,fromId, toId, "uses_type", "");
 
-        var w1 = db.StrengthenEdge(scanId, fromId, toId, "uses_type");
-        var w2 = db.StrengthenEdge(scanId, fromId, toId, "uses_type");
-        var w3 = db.StrengthenEdge(scanId, fromId, toId, "uses_type");
+        var w1 = db.StrengthenEdge(projectId,fromId, toId, "uses_type");
+        var w2 = db.StrengthenEdge(projectId,fromId, toId, "uses_type");
+        var w3 = db.StrengthenEdge(projectId,fromId, toId, "uses_type");
 
         Assert.Equal(2, w1);
         Assert.Equal(3, w2);
@@ -104,13 +104,13 @@ public class GraphCurationTests : IDisposable
     [Fact]
     public void Strengthen_OnMissingEdge_ReturnsNull()
     {
-        var (db, _, scanId) = SetupScan();
+        var (db, projectId, _) = SetupScan();
         using var _ = db;
 
-        var fromId = db.UpsertCuratedNode(scanId, "class", "A", "", "");
-        var toId = db.UpsertCuratedNode(scanId, "class", "B", "", "");
+        var fromId = db.UpsertCuratedNode(projectId,"class", "A", "", "");
+        var toId = db.UpsertCuratedNode(projectId,"class", "B", "", "");
 
-        var result = db.StrengthenEdge(scanId, fromId, toId, "does_not_exist");
+        var result = db.StrengthenEdge(projectId,fromId, toId, "does_not_exist");
 
         Assert.Null(result);
     }
@@ -118,15 +118,15 @@ public class GraphCurationTests : IDisposable
     [Fact]
     public void FindNodeIdsByLabel_DisambiguatesCollisions()
     {
-        var (db, _, scanId) = SetupScan();
+        var (db, projectId, _) = SetupScan();
         using var _ = db;
 
         // Two distinct nodes that happen to share a label but differ in kind —
         // the curated stable-key uses kind:label, so they're separate rows.
-        var classFoo = db.UpsertCuratedNode(scanId, "class", "Foo", "", "");
-        var moduleFoo = db.UpsertCuratedNode(scanId, "module", "Foo", "", "");
+        var classFoo = db.UpsertCuratedNode(projectId,"class", "Foo", "", "");
+        var moduleFoo = db.UpsertCuratedNode(projectId,"module", "Foo", "", "");
 
-        var matches = db.FindNodeIdsByLabel(scanId, "Foo");
+        var matches = db.FindNodeIdsByLabel(projectId,"Foo");
         Assert.Equal(2, matches.Count);
         Assert.Contains(classFoo, matches);
         Assert.Contains(moduleFoo, matches);
@@ -135,10 +135,10 @@ public class GraphCurationTests : IDisposable
     [Fact]
     public void UpdateNodeFields_AppliesOnlyProvidedFields()
     {
-        var (db, _, scanId) = SetupScan();
+        var (db, projectId, _) = SetupScan();
         using var _ = db;
 
-        var nodeId = db.UpsertCuratedNode(scanId, "class", "OriginalLabel", "old/path", "old detail");
+        var nodeId = db.UpsertCuratedNode(projectId,"class", "OriginalLabel", "old/path", "old detail");
 
         var changed = db.UpdateNodeFields(nodeId, kind: null, label: "RenamedLabel", path: null, detail: "new detail");
 
@@ -153,12 +153,12 @@ public class GraphCurationTests : IDisposable
     [Fact]
     public void DeleteEdge_RemovesEdge_NotNodes()
     {
-        var (db, _, scanId) = SetupScan();
+        var (db, projectId, _) = SetupScan();
         using var _ = db;
 
-        var fromId = db.UpsertCuratedNode(scanId, "class", "A", "", "");
-        var toId = db.UpsertCuratedNode(scanId, "class", "B", "", "");
-        var edgeId = db.UpsertCuratedEdge(scanId, fromId, toId, "uses_type", "");
+        var fromId = db.UpsertCuratedNode(projectId,"class", "A", "", "");
+        var toId = db.UpsertCuratedNode(projectId,"class", "B", "", "");
+        var edgeId = db.UpsertCuratedEdge(projectId,fromId, toId, "uses_type", "");
 
         var removed = db.DeleteEdge(edgeId);
 
@@ -170,14 +170,14 @@ public class GraphCurationTests : IDisposable
     [Fact]
     public void DeleteNodeCascade_RemovesIncidentEdges()
     {
-        var (db, _, scanId) = SetupScan();
+        var (db, projectId, _) = SetupScan();
         using var _ = db;
 
-        var a = db.UpsertCuratedNode(scanId, "class", "A", "", "");
-        var b = db.UpsertCuratedNode(scanId, "class", "B", "", "");
-        var c = db.UpsertCuratedNode(scanId, "class", "C", "", "");
-        db.UpsertCuratedEdge(scanId, a, b, "uses_type", "");
-        db.UpsertCuratedEdge(scanId, c, b, "creates", "");
+        var a = db.UpsertCuratedNode(projectId,"class", "A", "", "");
+        var b = db.UpsertCuratedNode(projectId,"class", "B", "", "");
+        var c = db.UpsertCuratedNode(projectId,"class", "C", "", "");
+        db.UpsertCuratedEdge(projectId,a, b, "uses_type", "");
+        db.UpsertCuratedEdge(projectId,c, b, "creates", "");
 
         var removed = db.DeleteNodeCascade(b);
 
