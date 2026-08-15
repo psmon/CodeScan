@@ -437,7 +437,7 @@ public static class GuiCommand
           <input id="query" placeholder="keyword or MATCH (c:class)-[r]->(t:type)" />
           <button id="clear" class="icon-x" title="Clear" aria-label="Clear search">&times;</button>
         </div>
-        <div class="hint-sm">Press Enter to run &middot; MATCH auto-routes to Query</div>
+        <div class="hint-sm">Press Enter to run &middot; MATCH auto-routes to Query &middot; variable hops <b>*1..3</b> supported</div>
       </div>
       <div class="seg" role="group" aria-label="Search mode">
         <button id="graph" class="active">Graph</button>
@@ -451,7 +451,7 @@ public static class GuiCommand
       <div class="field">
         <label class="micro" for="type">Keyword Type</label>
         <select id="type">
-          <option value="">All</option><option value="method">Method</option><option value="file">File</option><option value="doc">Doc</option><option value="comment">Comment</option><option value="commit">Commit</option>
+          <option value="">All</option><option value="method">Method</option><option value="file">File</option><option value="doc">Doc</option><option value="doc-meta">Doc Meta</option><option value="heading">Heading</option><option value="comment">Comment</option><option value="commit">Commit</option>
         </select>
       </div>
       <div class="field">
@@ -464,13 +464,24 @@ public static class GuiCommand
       <div class="field">
         <label class="micro" for="querySample">Graph Query Samples</label>
         <select id="querySample">
-          <option value="">Choose a MATCH query sample...</option>
-          <option value="MATCH (f:file)-[r:imports]->(m:module) WHERE m.label CONTAINS 'System' LIMIT 40">Files importing System modules</option>
-          <option value="MATCH (c:class)-[r:uses_type]->(t:type) WHERE t.label CONTAINS 'Actor' LIMIT 40">Classes using Actor-related types</option>
-          <option value="MATCH (c:class)-[r:creates]->(t:type) LIMIT 40">Classes creating object types</option>
-          <option value="MATCH (c:class)-[r:inherits_or_implements]->(t:type) LIMIT 40">Inheritance and interface links</option>
-          <option value="MATCH (a:author)-[r:authored]->(m:method) LIMIT 40">Authors and authored methods</option>
-          <option value="MATCH (f:file)-[r:has_comment]->(cm:comment) LIMIT 40">Files with comment nodes</option>
+          <option value="">Try a sample query (onboarding)...</option>
+          <optgroup label="Code &#8596; Docs">
+            <option value="MATCH (h:heading)-[r:mentions]->(c:class) LIMIT 50">Docs that mention a code class (mentions)</option>
+            <option value="MATCH (h:heading)-[r:mentions]->(c:class) WHERE c.label CONTAINS 'Analyzer' LIMIT 40">Docs mentioning *Analyzer classes</option>
+            <option value="MATCH (p:project)-[r:documents]->(d:doc) LIMIT 20">Project's representative doc</option>
+            <option value="MATCH (f:file)-[r:has_heading]->(h:heading) LIMIT 50">Files and their headings</option>
+          </optgroup>
+          <optgroup label="Multi-hop (variable length *)">
+            <option value="MATCH (c:class)-[r*1..3]->(t:type) WHERE c.label CONTAINS 'Store' LIMIT 60">What a class reaches within 3 hops</option>
+            <option value="MATCH (d:directory)-[r:contains*1..2]->(f:file) LIMIT 60">Files under a directory (1-2 hops)</option>
+          </optgroup>
+          <optgroup label="Structure">
+            <option value="MATCH (c:class)-[r:inherits_or_implements]->(t:type) LIMIT 40">Inheritance and interface links</option>
+            <option value="MATCH (f:file)-[r:imports]->(m:module) WHERE m.label CONTAINS 'System' LIMIT 40">Files importing System modules</option>
+            <option value="MATCH (c:class)-[r:uses_type]->(t:type) LIMIT 40">Classes and the types they use</option>
+            <option value="MATCH (c:class)-[r:creates]->(t:type) LIMIT 40">Classes creating object types</option>
+            <option value="MATCH (a:author)-[r:authored]->(m:method) LIMIT 40">Authors and authored methods</option>
+          </optgroup>
         </select>
       </div>
       <div class="checks">
@@ -502,7 +513,7 @@ public static class GuiCommand
   <script>
     const $ = id => document.getElementById(id);
     const canvas = $("graphCanvas"), ctx = canvas.getContext("2d");
-    const colors = { project:"#0b7285", directory:"#5c7cfa", file:"#2f9e44", class:"#f08c00", method:"#c2255c", comment:"#7048e8", doc:"#087f5b", author:"#495057", type:"#b7791f", module:"#1971c2" };
+    const colors = { project:"#0b7285", directory:"#5c7cfa", file:"#2f9e44", class:"#f08c00", method:"#c2255c", comment:"#7048e8", doc:"#087f5b", "doc-meta":"#0ca678", heading:"#e8590c", author:"#495057", type:"#b7791f", module:"#1971c2" };
     const state = {
       graph:{nodes:[], edges:[]}, visibleKinds:new Set(), selected:null, hovered:null, mode:"2d",
       view:{x:0,y:0,zoom:1}, camera:{yaw:-0.45,pitch:0.55,distance:720,x:0,y:0},
@@ -517,7 +528,7 @@ public static class GuiCommand
     function params(){ const q=encodeURIComponent($("query").value.trim()); const p=$("project").value; return `q=${q}${p?`&project=${p}`:""}`; }
     $("graph").onclick = async () => runGraphSearch();
     $("graphQuery").onclick = async () => runGraphQuery();
-    $("querySample").onchange = () => { const v=$("querySample").value; if(!v) return; $("query").value=v; setDepth(1); $("query").focus(); };
+    $("querySample").onchange = () => { const v=$("querySample").value; if(!v) return; $("query").value=v; setDepth(0); ["graph","graphQuery","keyword"].forEach(x=>$(x).classList.toggle("active",x==="graphQuery")); runGraphQuery(); };
     function setDepth(v){ $("depth").value=String(v); document.querySelectorAll("#depthPills button").forEach(b=>b.classList.toggle("active",b.dataset.d===String(v))); }
     document.querySelectorAll("#depthPills button").forEach(b=>b.onclick=()=>{ setDepth(b.dataset.d); runGraphSearch(); });
     ["graph","graphQuery","keyword"].forEach(id=>$(id).addEventListener("click",()=>{ ["graph","graphQuery","keyword"].forEach(x=>$(x).classList.toggle("active",x===id)); }));
@@ -530,7 +541,8 @@ public static class GuiCommand
     $("view2d").onclick = () => setMode("2d");
     $("view3d").onclick = () => setMode("3d");
     async function runGraphSearch(){ try{ const data=await api(`/api/graph?depth=${$("depth").value}&limit=180&${params()}`); setGraph(data); } catch(e){ $("stats").textContent=e.message; } }
-    async function runGraphQuery(){ try{ const data=await api(`/api/query?depth=${$("depth").value}&limit=180&${params()}`); setGraph(data); } catch(e){ $("stats").textContent=`Query error: ${e.message}`; } }
+    async function runGraphQuery(){ try{ const data=await api(`/api/query?depth=${$("depth").value}&limit=180&${params()}`); setGraph(data); } catch(e){ showQueryError(e.message); } }
+    function showQueryError(msg){ setGraph({nodes:[],edges:[]}); $("stats").textContent="Query not supported — see guidance →"; const kb=$("detailKind"); kb.className="kind-badge"; kb.style.background="#ffe3e3"; kb.style.color="#c92a2a"; kb.textContent="QUERY ERROR"; $("detailTitle").textContent="Unsupported query"; $("detailMeta").textContent="Rewrite using the capability guide below."; $("detailBody").innerHTML=`<pre style="white-space:pre-wrap;word-break:break-word;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--ink-2);margin:0;background:var(--soft);border:1px solid var(--line);border-radius:8px;padding:12px;">${escapeHtml(msg)}</pre>`; }
     function setMode(mode){
       state.mode=mode;
       const is3d=mode==="3d";
@@ -617,13 +629,16 @@ public static class GuiCommand
         const grd=ctx.createLinearGradient(p.x,p.y,q.x,q.y);
         grd.addColorStop(0,active?"#f472b6":"rgba(34,211,238,.78)");
         grd.addColorStop(1,active?"#67e8f9":"rgba(167,139,250,.62)");
-        ctx.strokeStyle=grd; ctx.lineWidth=(active?2.9:1.15)*depth; ctx.shadowColor=active?"rgba(236,72,153,.68)":"rgba(34,211,238,.32)"; ctx.shadowBlur=active?18:8;
+        ctx.strokeStyle=grd; ctx.lineWidth=(active?2.9:edgeWidth(e))*depth; ctx.shadowColor=active?"rgba(236,72,153,.68)":"rgba(34,211,238,.32)"; ctx.shadowBlur=active?18:8;
         ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(q.x,q.y); ctx.stroke(); ctx.shadowBlur=0;
-        if($("edgeLabels").checked && (active || e.kind)){ const mx=(p.x+q.x)/2, my=(p.y+q.y)/2; const text=e.kind||e.label||""; ctx.font="11px system-ui"; const w=ctx.measureText(text).width+12; ctx.fillStyle="rgba(4,9,22,.78)"; ctx.fillRect(mx-w/2,my-10,w,18); ctx.fillStyle=active?"#f9a8d4":"#bae6fd"; ctx.fillText(text,mx-w/2+6,my+3); }
+        if($("edgeLabels").checked && (active || e.kind)){ const mx=(p.x+q.x)/2, my=(p.y+q.y)/2; const text=edgeText(e); ctx.font="11px system-ui"; const w=ctx.measureText(text).width+12; ctx.fillStyle="rgba(4,9,22,.78)"; ctx.fillRect(mx-w/2,my-10,w,18); ctx.fillStyle=active?"#f9a8d4":"#bae6fd"; ctx.fillText(text,mx-w/2+6,my+3); }
         return;
       }
-      ctx.strokeStyle=active?"#0b7285":"#b9c4d0"; ctx.lineWidth=active?2.8:1.2; ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(q.x,q.y); ctx.stroke(); if($("edgeLabels").checked && (active || e.kind)){ const mx=(p.x+q.x)/2, my=(p.y+q.y)/2; ctx.fillStyle="rgba(255,255,255,.9)"; const text=e.kind||e.label||""; ctx.font="11px system-ui"; const w=ctx.measureText(text).width+10; ctx.fillRect(mx-w/2,my-9,w,16); ctx.fillStyle="#536173"; ctx.fillText(text,mx-w/2+5,my+3); }
+      ctx.strokeStyle=active?"#0b7285":"#b9c4d0"; ctx.lineWidth=active?2.8:edgeWidth(e); ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(q.x,q.y); ctx.stroke(); if($("edgeLabels").checked && (active || e.kind)){ const mx=(p.x+q.x)/2, my=(p.y+q.y)/2; ctx.fillStyle="rgba(255,255,255,.9)"; const text=edgeText(e); ctx.font="11px system-ui"; const w=ctx.measureText(text).width+10; ctx.fillRect(mx-w/2,my-9,w,16); ctx.fillStyle="#536173"; ctx.fillText(text,mx-w/2+5,my+3); }
     }
+    // Edge width and label reflect weight = corroborating-scan evidence (Phase 2).
+    function edgeWidth(e){ const w=e.weight||1; return Math.min(4.5, 1.1 + Math.log2(w+1)*0.9); }
+    function edgeText(e){ const base=e.kind||e.label||""; return (e.weight||1)>1 ? `${base} ×${e.weight}` : base; }
     function drawNode(n,p){
       const active=state.selected?.type==="node"&&state.selected.item.id===n.id;
       const r=Math.max(4,n.r*(state.mode==="3d"?p.s:1));
@@ -649,7 +664,7 @@ public static class GuiCommand
     canvas.addEventListener("wheel", e=>{ e.preventDefault(); const p=pos(e); if(state.mode==="2d"){ const old=state.view.zoom, next=Math.max(.15,Math.min(5,old*(e.deltaY<0?1.12:.88))); state.view.x=p.x-(p.x-state.view.x)*(next/old); state.view.y=p.y-(p.y-state.view.y)*(next/old); state.view.zoom=next; } else { state.camera.distance=Math.max(180,Math.min(2200,state.camera.distance*(e.deltaY<0?.9:1.1))); } draw(); }, {passive:false});
     function selectNode(n){ state.selected={type:"node",item:n}; document.querySelectorAll(".item").forEach(i=>i.classList.toggle("selected",i.dataset.id==n.id)); renderDetail(state.selected); draw(); }
     function selectEdge(e){ state.selected={type:"edge",item:e}; renderDetail(state.selected); draw(); }
-    function renderDetail(sel){ const kb=$("detailKind"); if(!sel){ kb.className="kind-badge"; kb.removeAttribute("style"); kb.textContent="DETAIL"; $("detailTitle").textContent="No selection"; $("detailMeta").textContent="Run graph search, then click a node or edge."; $("detailBody").innerHTML=""; return; } if(sel.type==="node"){ const n=sel.item, c=colors[n.kind]||"#748094"; kb.className="kind-badge"; kb.style.background=c+"1f"; kb.style.color=c; kb.innerHTML=`<span class="dot" style="background:${c}"></span>${escapeHtml(n.kind.toUpperCase())}`; $("detailTitle").textContent=n.label; $("detailMeta").textContent=n.path||`scan ${n.scanId}`; const rel=relations(n); $("detailBody").innerHTML=`<div class="kv"><div><span class="k">ID</span><span class="v">${n.id}</span></div><div><span class="k">Kind</span><span class="v">${escapeHtml(n.kind)}</span></div>${n.path?`<div><span class="k">Path</span><span class="v">${escapeHtml(n.path)}</span></div>`:""}${n.detail?`<div><span class="k">Detail</span><span class="v">${escapeHtml(n.detail)}</span></div>`:""}</div>${rel}`; } else { const e=sel.item, map=new Map(state.graph.nodes.map(n=>[n.id,n])), a=map.get(e.from), b=map.get(e.to); kb.className="kind-badge"; kb.removeAttribute("style"); kb.textContent="EDGE"; $("detailTitle").textContent=e.kind||e.label||"relationship"; $("detailMeta").textContent=`${a?.label||e.from} -> ${b?.label||e.to}`; $("detailBody").innerHTML=`<div class="kv"><div><span class="k">From</span><span class="v">${escapeHtml(a?.label||e.from)}</span></div><div><span class="k">To</span><span class="v">${escapeHtml(b?.label||e.to)}</span></div><div><span class="k">Kind</span><span class="v">${escapeHtml(e.kind||"")}</span></div>${e.label?`<div><span class="k">Label</span><span class="v">${escapeHtml(e.label)}</span></div>`:""}</div>`; } }
+    function renderDetail(sel){ const kb=$("detailKind"); if(!sel){ kb.className="kind-badge"; kb.removeAttribute("style"); kb.textContent="DETAIL"; $("detailTitle").textContent="No selection"; $("detailMeta").textContent="Run graph search, then click a node or edge."; $("detailBody").innerHTML=""; return; } if(sel.type==="node"){ const n=sel.item, c=colors[n.kind]||"#748094"; kb.className="kind-badge"; kb.style.background=c+"1f"; kb.style.color=c; kb.innerHTML=`<span class="dot" style="background:${c}"></span>${escapeHtml(n.kind.toUpperCase())}`; $("detailTitle").textContent=n.label; $("detailMeta").textContent=n.path||`scan ${n.scanId}`; const rel=relations(n); $("detailBody").innerHTML=`<div class="kv"><div><span class="k">ID</span><span class="v">${n.id}</span></div><div><span class="k">Kind</span><span class="v">${escapeHtml(n.kind)}</span></div>${n.path?`<div><span class="k">Path</span><span class="v">${escapeHtml(n.path)}</span></div>`:""}${n.detail?`<div><span class="k">Detail</span><span class="v">${escapeHtml(n.detail)}</span></div>`:""}</div>${rel}`; } else { const e=sel.item, map=new Map(state.graph.nodes.map(n=>[n.id,n])), a=map.get(e.from), b=map.get(e.to); kb.className="kind-badge"; kb.removeAttribute("style"); kb.textContent="EDGE"; $("detailTitle").textContent=e.kind||e.label||"relationship"; $("detailMeta").textContent=`${a?.label||e.from} -> ${b?.label||e.to}`; $("detailBody").innerHTML=`<div class="kv"><div><span class="k">From</span><span class="v">${escapeHtml(a?.label||e.from)}</span></div><div><span class="k">To</span><span class="v">${escapeHtml(b?.label||e.to)}</span></div><div><span class="k">Kind</span><span class="v">${escapeHtml(e.kind||"")}</span></div><div><span class="k">Weight (corroborating scans)</span><span class="v">${e.weight??1}</span></div>${e.label?`<div><span class="k">Label</span><span class="v">${escapeHtml(e.label)}</span></div>`:""}</div>`; } }
     function relations(n){ const map=new Map(state.graph.nodes.map(x=>[x.id,x])); const rows=state.graph.edges.filter(e=>e.from===n.id||e.to===n.id).slice(0,18).map(e=>{ const other=map.get(e.from===n.id?e.to:e.from); const c=other?(colors[other.kind]||"#748094"):"#748094"; return `<div class="rel-row" data-id="${other?.id||""}"><span class="rel-kind">${escapeHtml(e.kind)}</span><svg class="arrow" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg><span class="dot" style="background:${c}"></span><span class="tgt">${escapeHtml(other?.label||"")}</span></div>`; }).join(""); setTimeout(()=>document.querySelectorAll(".rel-row[data-id]").forEach(el=>el.onclick=()=>{ const nn=state.graph.nodes.find(x=>String(x.id)===el.dataset.id); if(nn) selectNode(nn); }),0); return `<div class="rel"><h3>Relationships</h3>${rows||'<div class="empty">No visible relationships.</div>'}</div>`; }
     function pos(e){ const r=canvas.getBoundingClientRect(); return {x:e.clientX-r.left,y:e.clientY-r.top}; }
     function distToSegment(px,py,x1,y1,x2,y2){ const dx=x2-x1, dy=y2-y1, l2=dx*dx+dy*dy||1; let t=((px-x1)*dx+(py-y1)*dy)/l2; t=Math.max(0,Math.min(1,t)); return Math.hypot(px-(x1+t*dx),py-(y1+t*dy)); }
