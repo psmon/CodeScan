@@ -16,11 +16,12 @@ Built as a single native AOT binary with .NET 10.0.
 - **Git blame integration** — Associates each method with its last author, date, and commit
 - **Full-text search** — FTS5 with trigram tokenizer for substring and CJK language support
 - **Hybrid search** — Combines indexed DB search with live `git log --grep` results
-- **Graph search** — Neo4j-style source knowledge graph stored in embedded SQLite
-- **Cypher-like graph query** — Safe `MATCH ... WHERE ... LIMIT ...` subset for structured graph retrieval
-- **Hybrid dependency graphing** — Regex-first dependency edges, with language/project metadata probes for future semantic analyzers
+- **Graph search** — Neo4j-style source knowledge graph in embedded SQLite, **incrementally reconciled** on rescan (relationships are re-aligned, not reset); edge weight = corroborating-scan evidence that decays when unobserved, and curated edges survive
+- **Cypher-like graph query** — Safe `MATCH ... WHERE ... LIMIT ...` subset with **variable-length paths** (`-[r*1..3]->`) and **actionable errors** that tell an AI how to rewrite an unsupported query
+- **Code↔doc graph** — Markdown headings that name a code class are linked to it (`mentions` edges), so the graph answers "which docs discuss this class"
+- **Hybrid dependency graphing** — Regex-first edges, plus optional **build-artifact harvest** (e.g. JVM `.class` inheritance, read with no toolchain) and language/project metadata probes
 - **Interactive TUI** — Terminal.Gui v2 interface for browsing, scanning, keyword search, graph search, and graph query
-- **Local web GUI** — Keyword search, graph search/query, interactive 2D graph exploration, and controllable 3D view on port 8085 by default
+- **Local web GUI** — Keyword/graph/query search with a 2D force-directed viewer (**drag-to-cluster magnet physics**, hubs sized by connection count), a **depth-lit 3D view** (Labels/Lines/Cluster toggles), and an **in-graph file preview**, on port 8085 by default
 - **Project management** — Register, describe, update, and delete indexed projects
 - **Single binary** — Native AOT compiled, no runtime dependency required
 
@@ -28,7 +29,11 @@ Built as a single native AOT binary with .NET 10.0.
 
 ### Web GUI Graph Viewer
 
-The local GUI provides keyword search, graph search, node/edge detail inspection, 2D graph controls, and a camera-controlled 3D graph view.
+The local GUI provides keyword search, graph search and Cypher-like query (with variable-hop and onboarding samples), and node/edge detail — including edge **weight**. Highlights:
+
+- **2D force-directed graph** — drag a node and connected nodes follow like magnets (pull scales with edge weight); repulsion keeps clusters readable; hubs are drawn larger by connection count.
+- **Depth-lit 3D view** — near nodes bright, far nodes dim (with a floor), for real depth; in-view **Labels / Lines / Cluster** toggles, where Cluster groups related nodes in 3D space.
+- **In-graph file preview** — a node's `path` opens the real file in a VS Code-style popup (line numbers, method line-range highlight), so a human or AI can read the content behind a relationship without leaving the graph.
 
 ![CodeScan GUI graph viewer](Home/img/codescan-gui.png)
 

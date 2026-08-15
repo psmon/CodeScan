@@ -209,7 +209,68 @@ public static class GuiCommand
             return JsonResponse(new ProjectsApiResponse { Projects = db.GetProjects() });
         }
 
+        if (path == "/api/file")
+            return ReadFile(queryString.GetValueOrDefault("path") ?? "", ParseLong(queryString.GetValueOrDefault("project")));
+
         return new ResponsePayload(404, "Not Found", "text/plain; charset=utf-8", "Not found");
+    }
+
+    // Serve a scanned file's content for the in-browser preview. The graph only
+    // stores relationships; this resolves the node's relative path against its
+    // project's absolute root_path and reads the file, guarding against path
+    // traversal outside the project and capping the size.
+    private static ResponsePayload ReadFile(string relativePath, long? projectId)
+    {
+        if (string.IsNullOrWhiteSpace(relativePath) || projectId is null)
+            return new ResponsePayload(400, "Bad Request", "text/plain; charset=utf-8", "project and path are required.");
+
+        using var db = new SqliteStore(AppPaths.DbPath);
+        var project = db.GetProject(projectId.Value);
+        if (project is null)
+            return new ResponsePayload(404, "Not Found", "text/plain; charset=utf-8", "project not found.");
+
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(project.RootPath));
+        string full;
+        try { full = Path.GetFullPath(Path.Combine(root, relativePath)); }
+        catch { return new ResponsePayload(400, "Bad Request", "text/plain; charset=utf-8", "invalid path."); }
+
+        // Path-traversal guard: the resolved path must stay under the project root.
+        if (!string.Equals(full, root, StringComparison.OrdinalIgnoreCase) &&
+            !full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            return new ResponsePayload(403, "Forbidden", "text/plain; charset=utf-8", "path escapes the project root.");
+
+        if (!File.Exists(full))
+            return new ResponsePayload(404, "Not Found", "text/plain; charset=utf-8", "file not found on disk.");
+
+        const long maxBytes = 512 * 1024;
+        try
+        {
+            var length = new FileInfo(full).Length;
+            var truncated = length > maxBytes;
+            string content;
+            if (truncated)
+            {
+                using var fs = new FileStream(full, FileMode.Open, FileAccess.Read);
+                var buffer = new byte[maxBytes];
+                var read = fs.Read(buffer, 0, buffer.Length);
+                content = Encoding.UTF8.GetString(buffer, 0, read);
+            }
+            else
+            {
+                content = File.ReadAllText(full);
+            }
+            return JsonResponse(new FileApiResponse
+            {
+                Path = relativePath,
+                AbsPath = full,
+                Content = content,
+                Truncated = truncated
+            });
+        }
+        catch (Exception ex)
+        {
+            return new ResponsePayload(500, "Internal Server Error", "text/plain; charset=utf-8", ex.Message);
+        }
     }
 
     private static bool IsExistingServerRunning(string pidPath, out int pid)
@@ -299,6 +360,14 @@ public static class GuiCommand
     internal sealed class ProjectsApiResponse
     {
         public List<ProjectInfo> Projects { get; init; } = [];
+    }
+
+    internal sealed class FileApiResponse
+    {
+        public string Path { get; init; } = "";
+        public string AbsPath { get; init; } = "";
+        public string Content { get; init; } = "";
+        public bool Truncated { get; init; }
     }
 
     private const string Html = """
@@ -418,6 +487,24 @@ public static class GuiCommand
     *:focus-visible { outline:2px solid var(--focus); outline-offset:2px; }
     @media (prefers-reduced-motion: reduce) { * { transition:none !important; animation:none !important; } }
     @media (max-width: 980px) { main { grid-template-columns:1fr; grid-template-rows:auto 70vh auto; height:auto; } aside, .detail { border:0; border-bottom:1px solid var(--line); } }
+    /* File preview button + MS-style code viewer modal */
+    .viewfile-btn { margin:10px 0 4px; width:100%; height:36px; display:flex; align-items:center; justify-content:center; gap:7px; border:1px solid var(--accent); background:var(--accent-soft); color:var(--accent-strong); border-radius:8px; font-weight:600; font-size:13px; cursor:pointer; transition:background .15s,color .15s; }
+    .viewfile-btn:hover { background:var(--accent); color:#fff; }
+    .modal { position:fixed; inset:0; z-index:60; display:flex; align-items:center; justify-content:center; padding:24px; background:rgba(9,16,26,.55); backdrop-filter:blur(2px); }
+    .modal[hidden] { display:none; }
+    .modal-card { width:min(1120px,95vw); height:min(82vh,920px); display:flex; flex-direction:column; overflow:hidden; background:var(--surface); border:1px solid var(--line); border-radius:12px; box-shadow:0 24px 70px rgba(0,0,0,.42); }
+    .modal-head { display:flex; align-items:center; gap:10px; padding:11px 14px; border-bottom:1px solid var(--line); background:var(--surface-2); }
+    .modal-dot { width:9px; height:9px; border-radius:50%; background:var(--accent); flex:0 0 auto; }
+    .modal-title { font:600 13px ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--ink); flex:0 0 auto; }
+    .modal-sub { font:11px ui-monospace,monospace; color:var(--muted); flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .code-view { flex:1; overflow:auto; background:#0d1117; }
+    .code-view table { border-collapse:collapse; width:100%; font:12.5px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+    .code-view td.ln { text-align:right; padding:0 12px 0 16px; color:#6e7681; background:#0d1117; user-select:none; width:1%; white-space:nowrap; position:sticky; left:0; border-right:1px solid #21262d; }
+    .code-view td.code { padding:0 18px 0 12px; white-space:pre; color:#c9d1d9; }
+    .code-view tr.hl td.code { background:#182135; }
+    .code-view tr.hl td.ln { background:#233047; color:#cdd7e5; }
+    .code-note { padding:9px 16px; color:#d29922; font:11px ui-monospace,monospace; background:#161b22; }
+    .code-msg { padding:16px; font:13px ui-monospace,monospace; }
   </style>
 </head>
 <body>
@@ -498,6 +585,9 @@ public static class GuiCommand
         <button id="view3d">3D</button>
         <button id="fit">Fit</button>
         <button id="resetCamera">Reset Camera</button>
+        <button id="tLabels" class="active" title="Toggle node text labels">Labels</button>
+        <button id="tLines" class="active" title="Toggle edge lines">Lines</button>
+        <button id="tCluster" title="Cluster related nodes together (force layout)">Cluster</button>
       </div>
       <div class="hintbar"><span id="modeHint">2D: drag canvas to pan, wheel to zoom, drag node to reposition</span><span>Click node or edge for detail</span></div>
     </section>
@@ -510,6 +600,17 @@ public static class GuiCommand
       <div class="panel-body" id="detailBody"></div>
     </section>
   </main>
+  <div id="fileModal" class="modal" hidden>
+    <div class="modal-card">
+      <div class="modal-head">
+        <span class="modal-dot"></span>
+        <span class="modal-title" id="fileTitle">file</span>
+        <span class="modal-sub" id="fileSub"></span>
+        <button id="fileClose" class="icon-x" title="Close" aria-label="Close file preview">&times;</button>
+      </div>
+      <div class="code-view" id="fileBody"></div>
+    </div>
+  </div>
   <script>
     const $ = id => document.getElementById(id);
     const canvas = $("graphCanvas"), ctx = canvas.getContext("2d");
@@ -517,7 +618,8 @@ public static class GuiCommand
     const state = {
       graph:{nodes:[], edges:[]}, visibleKinds:new Set(), selected:null, hovered:null, mode:"2d",
       view:{x:0,y:0,zoom:1}, camera:{yaw:-0.45,pitch:0.55,distance:720,x:0,y:0},
-      pointer:null, dragNode:null, screen:new Map(), edgeScreen:[], stars:[], animation:null, time:0
+      pointer:null, dragNode:null, screen:new Map(), edgeScreen:[], stars:[], animation:null, time:0,
+      alpha:0, simRAF:null, showEdges:true, cluster:false, depthS:null
     };
     let cw = 800, ch = 600;
     function fitCanvas(){ const r=canvas.getBoundingClientRect(); const d=devicePixelRatio||1; cw=Math.max(320,r.width); ch=Math.max(260,r.height); const w=Math.round(cw*d), h=Math.round(ch*d); if(canvas.width!==w || canvas.height!==h){ canvas.width=w; canvas.height=h; if(state.mode==="3d") state.stars=[]; } ctx.setTransform(d,0,0,d,0,0); }
@@ -535,11 +637,14 @@ public static class GuiCommand
     $("keyword").onclick = async () => { const t=$("type").value; const data=await api(`/api/search?limit=80${t?`&type=${t}`:""}&${params()}`); renderKeywordResults(data.results); };
     $("clear").onclick = () => { $("query").value=""; setGraph({nodes:[],edges:[]}); renderDetail(null); };
     $("query").addEventListener("keydown", e => { if(e.key==="Enter") ($("query").value.trim().toLowerCase().startsWith("match ") ? $("graphQuery") : $("graph")).click(); });
-    $("labels").onchange = draw; $("edgeLabels").onchange = draw;
+    $("labels").onchange = () => { $("tLabels").classList.toggle("active",$("labels").checked); draw(); }; $("edgeLabels").onchange = draw;
     $("fit").onclick = () => { fitView(); draw(); };
     $("resetCamera").onclick = () => { state.view={x:0,y:0,zoom:1}; state.camera={yaw:-0.45,pitch:0.55,distance:720,x:0,y:0}; fitView(); draw(); };
     $("view2d").onclick = () => setMode("2d");
     $("view3d").onclick = () => setMode("3d");
+    $("tLabels").onclick = () => { $("labels").checked=!$("labels").checked; $("tLabels").classList.toggle("active",$("labels").checked); draw(); };
+    $("tLines").onclick = () => { state.showEdges=!state.showEdges; $("tLines").classList.toggle("active",state.showEdges); draw(); };
+    $("tCluster").onclick = () => { state.cluster=!state.cluster; $("tCluster").classList.toggle("active",state.cluster); if(state.cluster) reheat(0.7); draw(); };
     async function runGraphSearch(){ try{ const data=await api(`/api/graph?depth=${$("depth").value}&limit=180&${params()}`); setGraph(data); } catch(e){ $("stats").textContent=e.message; } }
     async function runGraphQuery(){ try{ const data=await api(`/api/query?depth=${$("depth").value}&limit=180&${params()}`); setGraph(data); } catch(e){ showQueryError(e.message); } }
     function showQueryError(msg){ setGraph({nodes:[],edges:[]}); $("stats").textContent="Query not supported — see guidance →"; const kb=$("detailKind"); kb.className="kind-badge"; kb.style.background="#ffe3e3"; kb.style.color="#c92a2a"; kb.textContent="QUERY ERROR"; $("detailTitle").textContent="Unsupported query"; $("detailMeta").textContent="Rewrite using the capability guide below."; $("detailBody").innerHTML=`<pre style="white-space:pre-wrap;word-break:break-word;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--ink-2);margin:0;background:var(--soft);border:1px solid var(--line);border-radius:8px;padding:12px;">${escapeHtml(msg)}</pre>`; }
@@ -560,7 +665,10 @@ public static class GuiCommand
     }
     function layoutGraph(){
       const nodes=state.graph.nodes, edges=state.graph.edges, map=new Map(nodes.map(n=>[n.id,n]));
-      nodes.forEach((n,i)=>{ const a=i*2.399, r=60+22*Math.sqrt(i+1); n.x=Math.cos(a)*r; n.y=Math.sin(a)*r; n.z=(i%7-3)*42; n.vx=0; n.vy=0; n.r=nodeRadius(n); });
+      // Degree = number of incident edges. Highly-connected nodes are hubs, so
+      // draw them as larger circles (importance) — applied via n.r for 2D & 3D.
+      const deg=new Map(); for(const e of edges){ deg.set(e.from,(deg.get(e.from)||0)+1); deg.set(e.to,(deg.get(e.to)||0)+1); }
+      nodes.forEach((n,i)=>{ const a=i*2.399, r=60+22*Math.sqrt(i+1); n.x=Math.cos(a)*r; n.y=Math.sin(a)*r; n.z=(i%7-3)*42; n.vx=0; n.vy=0; n.vz=0; n.degree=deg.get(n.id)||0; n.r=nodeRadius(n)+Math.min(18,Math.sqrt(n.degree)*2.6); });
       for(let iter=0; iter<180 && nodes.length<260; iter++){
         for(let i=0;i<nodes.length;i++) for(let j=i+1;j<nodes.length;j++){ const a=nodes[i], b=nodes[j], dx=a.x-b.x, dy=a.y-b.y, d2=dx*dx+dy*dy+0.1, f=900/d2; a.vx+=dx*f*.002; a.vy+=dy*f*.002; b.vx-=dx*f*.002; b.vy-=dy*f*.002; }
         for(const e of edges){ const a=map.get(e.from), b=map.get(e.to); if(!a||!b) continue; const dx=b.x-a.x, dy=b.y-a.y, d=Math.hypot(dx,dy)||1, target=90; const f=(d-target)*0.006; a.vx+=dx/d*f; a.vy+=dy/d*f; b.vx-=dx/d*f; b.vy-=dy/d*f; }
@@ -568,6 +676,46 @@ public static class GuiCommand
       }
     }
     function nodeRadius(n){ return n.kind==="project"?11:n.kind==="directory"?8:n.kind==="class"?8:n.kind==="method"?6:n.kind==="type"?7:5; }
+    // Live force simulation (2D). Dragging a node pulls its neighbours like
+    // magnets — springs along edges, stronger when the relationship is more
+    // corroborated (edge weight). Repulsion + hard separation keep nodes from
+    // overlapping so highly-connected clusters stay readable. Energy (alpha)
+    // decays so the graph settles and the loop stops (no idle CPU).
+    function reheat(a){ if(a>state.alpha) state.alpha=a; startSim(); }
+    function startSim(){ if(state.simRAF) return; const step=(now)=>{ if(state.mode==="3d") state.time=(now||0)*.001; physicsTick(); draw(); if(state.alpha>0.004 || state.dragNode || state.cluster) state.simRAF=requestAnimationFrame(step); else state.simRAF=null; }; state.simRAF=requestAnimationFrame(step); }
+    // Force simulation. Works in 2D (drag magnet) and 3D (Cluster button) — in 3D
+    // the z axis participates so connected/similar nodes group in depth too.
+    function physicsTick(){
+      const nodes=state.graph.nodes, edges=state.graph.edges; if(nodes.length<2){ if(!state.cluster) state.alpha=0; return; }
+      const map=new Map(nodes.map(n=>[n.id,n])), is3d=state.mode==="3d";
+      const alpha=(state.dragNode||state.cluster)?Math.max(state.alpha,0.3):state.alpha;
+      let cx=0,cy=0,cz=0; for(const n of nodes){ cx+=n.x; cy+=n.y; cz+=n.z||0; } cx/=nodes.length; cy/=nodes.length; cz/=nodes.length;
+      // Repulsion + hard anti-overlap (visibility) within a local cutoff.
+      const cut2=340*340;
+      for(let i=0;i<nodes.length;i++){ const a=nodes[i];
+        for(let j=i+1;j<nodes.length;j++){ const b=nodes[j];
+          let dx=a.x-b.x, dy=a.y-b.y, dz=is3d?((a.z||0)-(b.z||0)):0, d2=dx*dx+dy*dy+dz*dz||0.01; if(d2>cut2) continue;
+          const d=Math.sqrt(d2), minD=a.r+b.r+22; let f=(a.r*b.r*2.2)/d2;
+          if(d<minD) f+=(minD-d)*0.55;
+          const s=f*alpha*0.05, ux=dx/d*s, uy=dy/d*s, uz=dz/d*s;
+          a.vx+=ux; a.vy+=uy; b.vx-=ux; b.vy-=uy;
+          if(is3d){ a.vz+=uz; b.vz-=uz; }
+        }
+      }
+      // Springs — magnet strength grows with edge weight (corroboration).
+      for(const e of edges){ const a=map.get(e.from), b=map.get(e.to); if(!a||!b) continue;
+        const dx=b.x-a.x, dy=b.y-a.y, dz=is3d?((b.z||0)-(a.z||0)):0, d=Math.sqrt(dx*dx+dy*dy+dz*dz)||0.01, rest=a.r+b.r+42;
+        const k=0.006*Math.min(3.5,1+Math.log2((e.weight||1)+1)), f=(d-rest)*k;
+        const ux=dx/d*f*alpha, uy=dy/d*f*alpha, uz=dz/d*f*alpha;
+        a.vx+=ux; a.vy+=uy; b.vx-=ux; b.vy-=uy;
+        if(is3d){ a.vz+=uz; b.vz-=uz; }
+      }
+      // Weak gravity to centre keeps disconnected pieces from drifting away.
+      for(const n of nodes){ n.vx+=(cx-n.x)*0.0016*alpha; n.vy+=(cy-n.y)*0.0016*alpha; if(is3d) n.vz+=(cz-(n.z||0))*0.0016*alpha; }
+      // Integrate; the dragged node stays pinned to the cursor (2D only).
+      for(const n of nodes){ if(n===state.dragNode){ n.vx=0; n.vy=0; continue; } n.vx*=0.85; n.vy*=0.85; const sp=Math.hypot(n.vx,n.vy); if(sp>18){ n.vx*=18/sp; n.vy*=18/sp; } n.x+=n.vx; n.y+=n.vy; if(is3d){ n.vz=(n.vz||0)*0.85; if(Math.abs(n.vz)>18) n.vz=18*Math.sign(n.vz); n.z=(n.z||0)+n.vz; } }
+      state.alpha*=0.985; if(state.cluster && state.alpha<0.03) state.alpha=0.03; if(!state.cluster && state.alpha<0.004) state.alpha=0;
+    }
     function buildLegend(){ const counts={}; for(const n of state.graph.nodes) counts[n.kind]=(counts[n.kind]||0)+1; const kinds=Object.keys(counts).sort(); state.visibleKinds=new Set(kinds); $("legend").innerHTML=""; for(const k of kinds){ const c=colors[k]||"#748094"; const el=document.createElement("span"); el.className="chip"; el.style.background=c+"1f"; el.style.borderColor=c+"55"; el.innerHTML=`<span class="dot" style="background:${c}"></span>${escapeHtml(k)}<span class="cnt" style="color:${c}">${counts[k]}</span>`; el.onclick=()=>{ if(state.visibleKinds.has(k)) state.visibleKinds.delete(k); else state.visibleKinds.add(k); el.classList.toggle("off",!state.visibleKinds.has(k)); renderList(); draw(); }; $("legend").appendChild(el); } }
     function visibleNode(n){ return state.visibleKinds.size===0 || state.visibleKinds.has(n.kind); }
     function visibleEdge(e,map){ const a=map.get(e.from), b=map.get(e.to); return a&&b&&visibleNode(a)&&visibleNode(b); }
@@ -575,7 +723,18 @@ public static class GuiCommand
     function renderKeywordResults(rows){ $("stats").textContent=`${rows.length} keyword results`; $("list").innerHTML=""; for(const r of rows){ const c=colors[r.type]||"#748094"; const d=document.createElement("div"); d.className="item"; d.innerHTML=`<span class="bar" style="background:${c}"></span><div class="body"><span class="tag" style="color:${c}">${escapeHtml(r.type)}</span><div class="name">${escapeHtml(r.name)}</div><div class="meta">${escapeHtml(r.path||"")}</div>${r.excerpt?`<div class="meta">${escapeHtml(r.excerpt)}</div>`:""}</div>`; $("list").appendChild(d); } }
     function fitView(){ const ns=state.graph.nodes.filter(visibleNode); if(!ns.length){state.view={x:0,y:0,zoom:1}; return;} let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity; for(const n of ns){minX=Math.min(minX,n.x);maxX=Math.max(maxX,n.x);minY=Math.min(minY,n.y);maxY=Math.max(maxY,n.y);} const sx=cw/Math.max(80,maxX-minX+120), sy=ch/Math.max(80,maxY-minY+120); state.view.zoom=Math.min(2.2,Math.max(.35,Math.min(sx,sy))); state.view.x=cw/2-(minX+maxX)/2*state.view.zoom; state.view.y=ch/2-(minY+maxY)/2*state.view.zoom; }
     function worldToScreen(n){ if(state.mode==="2d") return {x:n.x*state.view.zoom+state.view.x,y:n.y*state.view.zoom+state.view.y,s:state.view.zoom,z:0}; const cam=state.camera, cyaw=Math.cos(cam.yaw), syaw=Math.sin(cam.yaw), cp=Math.cos(cam.pitch), sp=Math.sin(cam.pitch); let x=n.x, y=n.y, z=n.z||0; let x1=x*cyaw-z*syaw, z1=x*syaw+z*cyaw; let y1=y*cp-z1*sp, z2=y*sp+z1*cp; const s=cam.distance/(cam.distance+z2+320); return {x:cw/2+cam.x+x1*s,y:ch/2+cam.y+y1*s,s,z:z2}; }
-    function draw(){ fitCanvas(); ctx.clearRect(0,0,cw,ch); if(state.mode==="3d") drawSpaceBackground(); else { ctx.fillStyle="#f8fafc"; ctx.fillRect(0,0,cw,ch); drawGrid(); } const map=new Map(state.graph.nodes.map(n=>[n.id,n])); state.screen.clear(); state.edgeScreen=[]; const edges=state.graph.edges.filter(e=>visibleEdge(e,map)); for(const e of edges){ const a=map.get(e.from), b=map.get(e.to), p=worldToScreen(a), q=worldToScreen(b); state.edgeScreen.push({edge:e,p,q}); drawEdge(e,p,q); } const nodes=state.graph.nodes.filter(visibleNode).map(n=>({n,p:worldToScreen(n)})).sort((a,b)=>a.p.z-b.p.z); for(const it of nodes){ state.screen.set(it.n.id,it.p); drawNode(it.n,it.p); } ctx.shadowBlur=0; ctx.globalAlpha=1; }
+    function draw(){ fitCanvas(); ctx.clearRect(0,0,cw,ch); if(state.mode==="3d") drawSpaceBackground(); else { ctx.fillStyle="#f8fafc"; ctx.fillRect(0,0,cw,ch); drawGrid(); }
+      const map=new Map(state.graph.nodes.map(n=>[n.id,n])); state.screen.clear(); state.edgeScreen=[];
+      const nodeList=state.graph.nodes.filter(visibleNode).map(n=>({n,p:worldToScreen(n)}));
+      // Depth range → 3D lighting (near nodes bright, far nodes dim but visible).
+      if(state.mode==="3d" && nodeList.length){ let mn=Infinity,mx=-Infinity; for(const it of nodeList){ if(it.p.s<mn)mn=it.p.s; if(it.p.s>mx)mx=it.p.s; } state.depthS={min:mn,max:mx}; } else state.depthS=null;
+      for(const it of nodeList) state.screen.set(it.n.id,it.p);
+      if(state.showEdges){ const edges=state.graph.edges.filter(e=>visibleEdge(e,map)); for(const e of edges){ const a=map.get(e.from), b=map.get(e.to), p=state.screen.get(a.id)||worldToScreen(a), q=state.screen.get(b.id)||worldToScreen(b); state.edgeScreen.push({edge:e,p,q}); drawEdge(e,p,q); } }
+      const ordered=nodeList.sort((a,b)=>a.p.z-b.p.z); for(const it of ordered) drawNode(it.n,it.p);
+      ctx.shadowBlur=0; ctx.globalAlpha=1; }
+    // depthLight(p) → 0..1 (0 far, 1 near) with a floor so far nodes stay faintly visible.
+    function depthLight(p){ if(!state.depthS) return 1; const r=state.depthS.max-state.depthS.min; const dn=r>0?(p.s-state.depthS.min)/r:1; return 0.42+0.58*dn; }
+    function shade(hex,f){ f=Math.max(0,Math.min(1,f)); if(hex[0]!=="#"||hex.length<7) return hex; const r=parseInt(hex.slice(1,3),16), g=parseInt(hex.slice(3,5),16), b=parseInt(hex.slice(5,7),16); return `rgb(${Math.round(r*f)},${Math.round(g*f)},${Math.round(b*f)})`; }
     function drawGrid(){ ctx.strokeStyle="#e8edf3"; ctx.lineWidth=1; const step=48; const ox=state.mode==="2d"?state.view.x%step:0, oy=state.mode==="2d"?state.view.y%step:0; for(let x=ox;x<cw;x+=step){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,ch);ctx.stroke();} for(let y=oy;y<ch;y+=step){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(cw,y);ctx.stroke();} }
     function drawSpaceBackground(){
       ensureStars();
@@ -620,7 +779,7 @@ public static class GuiCommand
       for(let i=0;i<target;i++) state.stars.push({ x:rnd(i,1)*cw, y:rnd(i,2)*ch, z:.28+rnd(i,3)*.9, size:.55+rnd(i,4)*1.75, phase:rnd(i,5)*Math.PI*2, speed:.12+rnd(i,6)*.72, hue:i });
     }
     function rnd(i,s){ const x=Math.sin((i+1)*(s*97.13))*10000; return x-Math.floor(x); }
-    function startSpaceAnimation(){ if(state.animation) return; if(window.matchMedia&&window.matchMedia("(prefers-reduced-motion: reduce)").matches){ draw(); return; } const tick=now=>{ state.animation=requestAnimationFrame(tick); state.time=now*.001; if(state.mode==="3d") draw(); }; state.animation=requestAnimationFrame(tick); }
+    function startSpaceAnimation(){ if(state.animation) return; if(window.matchMedia&&window.matchMedia("(prefers-reduced-motion: reduce)").matches){ draw(); return; } const tick=now=>{ state.animation=requestAnimationFrame(tick); state.time=now*.001; if(state.mode==="3d" && !state.simRAF) draw(); }; state.animation=requestAnimationFrame(tick); }
     function stopSpaceAnimation(){ if(!state.animation) return; cancelAnimationFrame(state.animation); state.animation=null; }
     function drawEdge(e,p,q){
       const active=state.selected?.type==="edge"&&state.selected.item.id===e.id;
@@ -643,13 +802,13 @@ public static class GuiCommand
       const active=state.selected?.type==="node"&&state.selected.item.id===n.id;
       const r=Math.max(4,n.r*(state.mode==="3d"?p.s:1));
       if(state.mode==="3d"){
-        const base=colors[n.kind]||"#748094", pulse=active?1+Math.sin((state.time||0)*4)*.08:1;
+        const base=colors[n.kind]||"#748094", pulse=active?1+Math.sin((state.time||0)*4)*.08:1, lit=depthLight(p);
         const grad=ctx.createRadialGradient(p.x-r*.35,p.y-r*.45,1,p.x,p.y,r*1.6*pulse);
-        grad.addColorStop(0,"#ffffff"); grad.addColorStop(.22,base); grad.addColorStop(1,"rgba(12,18,36,.18)");
-        ctx.fillStyle=grad; ctx.strokeStyle=active?"#f9a8d4":"rgba(219,234,254,.86)"; ctx.lineWidth=active?2.8:1.15; ctx.shadowColor=active?"rgba(236,72,153,.78)":"rgba(34,211,238,.34)"; ctx.shadowBlur=active?28:12;
+        grad.addColorStop(0,shade("#ffffff",Math.max(.5,lit))); grad.addColorStop(.22,shade(base,lit)); grad.addColorStop(1,"rgba(12,18,36,.18)");
+        ctx.fillStyle=grad; ctx.strokeStyle=active?"#f9a8d4":`rgba(219,234,254,${(0.5+0.45*lit).toFixed(2)})`; ctx.lineWidth=active?2.8:1.15; ctx.shadowColor=active?"rgba(236,72,153,.78)":`rgba(34,211,238,${(0.14+0.3*lit).toFixed(2)})`; ctx.shadowBlur=active?28:6+10*lit;
         ctx.beginPath(); if(n.kind==="file"||n.kind==="doc") roundedRect(p.x-r,p.y-r*.75,r*2,r*1.5,4); else ctx.arc(p.x,p.y,r*pulse,0,Math.PI*2); ctx.fill(); ctx.stroke(); ctx.shadowBlur=0;
         if(active){ ctx.strokeStyle="rgba(34,211,238,.45)"; ctx.lineWidth=1.1; ctx.beginPath(); ctx.arc(p.x,p.y,r*2.15+Math.sin((state.time||0)*3)*3,0,Math.PI*2); ctx.stroke(); }
-        if($("labels").checked || active){ ctx.font=active?"700 12px system-ui":"12px system-ui"; ctx.fillStyle=active?"#fce7f3":"#dbeafe"; ctx.shadowColor="rgba(3,7,18,.9)"; ctx.shadowBlur=8; ctx.fillText(trim(n.label,36),p.x+r+7,p.y-6); ctx.shadowBlur=0; }
+        if($("labels").checked || active){ ctx.font=active?"700 12px system-ui":"12px system-ui"; ctx.globalAlpha=active?1:Math.max(.35,lit); ctx.fillStyle=active?"#fce7f3":"#dbeafe"; ctx.shadowColor="rgba(3,7,18,.9)"; ctx.shadowBlur=8; ctx.fillText(trim(n.label,36),p.x+r+7,p.y-6); ctx.shadowBlur=0; ctx.globalAlpha=1; }
         return;
       }
       ctx.fillStyle=colors[n.kind]||"#748094"; ctx.strokeStyle=active?"#111827":"#fff"; ctx.lineWidth=active?3:1.5; ctx.beginPath(); if(n.kind==="file"||n.kind==="doc") roundedRect(p.x-r,p.y-r*.75,r*2,r*1.5,4); else ctx.arc(p.x,p.y,r,0,Math.PI*2); ctx.fill(); ctx.stroke(); if($("labels").checked || active){ ctx.font=active?"700 12px system-ui":"12px system-ui"; ctx.fillStyle="#15202b"; ctx.fillText(trim(n.label,36),p.x+r+6,p.y-6); }
@@ -657,19 +816,50 @@ public static class GuiCommand
     function roundedRect(x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y); ctx.quadraticCurveTo(x+w,y,x+w,y+r); ctx.lineTo(x+w,y+h-r); ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h); ctx.lineTo(x+r,y+h); ctx.quadraticCurveTo(x,y+h,x,y+h-r); ctx.lineTo(x,y+r); ctx.quadraticCurveTo(x,y,x+r,y); }
     function pickNode(x,y){ let best=null, bd=Infinity; for(const n of state.graph.nodes.filter(visibleNode)){ const p=state.screen.get(n.id); if(!p) continue; const d=Math.hypot(x-p.x,y-p.y), r=Math.max(7,n.r*(state.mode==="3d"?p.s:state.view.zoom)); if(d<r+5 && d<bd){ best=n; bd=d; } } return best; }
     function pickEdge(x,y){ let best=null, bd=9; for(const it of state.edgeScreen){ const d=distToSegment(x,y,it.p.x,it.p.y,it.q.x,it.q.y); if(d<bd){best=it.edge;bd=d;} } return best; }
-    canvas.addEventListener("mousedown", e=>{ const p=pos(e); canvas.classList.add("dragging"); const n=pickNode(p.x,p.y); state.pointer={x:p.x,y:p.y,button:e.button,shift:e.shiftKey}; if(n&&state.mode==="2d"&&e.button===0){state.dragNode=n; selectNode(n);} else if(n){selectNode(n);} else { const edge=pickEdge(p.x,p.y); if(edge) selectEdge(edge); } });
-    canvas.addEventListener("mousemove", e=>{ const p=pos(e); if(!state.pointer){ const n=pickNode(p.x,p.y), edge=n?null:pickEdge(p.x,p.y); state.hovered=n||edge; draw(); return; } const dx=p.x-state.pointer.x, dy=p.y-state.pointer.y; if(state.dragNode&&state.mode==="2d"){ state.dragNode.x=(p.x-state.view.x)/state.view.zoom; state.dragNode.y=(p.y-state.view.y)/state.view.zoom; } else if(state.mode==="2d"){ state.view.x+=dx; state.view.y+=dy; } else if(state.pointer.shift||state.pointer.button===2){ state.camera.x+=dx; state.camera.y+=dy; } else { state.camera.yaw+=dx*.008; state.camera.pitch=Math.max(-1.2,Math.min(1.2,state.camera.pitch+dy*.008)); } state.pointer.x=p.x; state.pointer.y=p.y; draw(); });
-    addEventListener("mouseup",()=>{ state.pointer=null; state.dragNode=null; canvas.classList.remove("dragging"); });
+    canvas.addEventListener("mousedown", e=>{ const p=pos(e); canvas.classList.add("dragging"); const n=pickNode(p.x,p.y); state.pointer={x:p.x,y:p.y,button:e.button,shift:e.shiftKey}; if(n&&state.mode==="2d"&&e.button===0){state.dragNode=n; selectNode(n); reheat(0.6);} else if(n){selectNode(n);} else { const edge=pickEdge(p.x,p.y); if(edge) selectEdge(edge); } });
+    canvas.addEventListener("mousemove", e=>{ const p=pos(e); if(!state.pointer){ const n=pickNode(p.x,p.y), edge=n?null:pickEdge(p.x,p.y); state.hovered=n||edge; draw(); return; } const dx=p.x-state.pointer.x, dy=p.y-state.pointer.y; if(state.dragNode&&state.mode==="2d"){ state.dragNode.x=(p.x-state.view.x)/state.view.zoom; state.dragNode.y=(p.y-state.view.y)/state.view.zoom; reheat(0.5); } else if(state.mode==="2d"){ state.view.x+=dx; state.view.y+=dy; } else if(state.pointer.shift||state.pointer.button===2){ state.camera.x+=dx; state.camera.y+=dy; } else { state.camera.yaw+=dx*.008; state.camera.pitch=Math.max(-1.2,Math.min(1.2,state.camera.pitch+dy*.008)); } state.pointer.x=p.x; state.pointer.y=p.y; draw(); });
+    addEventListener("mouseup",()=>{ state.pointer=null; if(state.dragNode) reheat(0.28); state.dragNode=null; canvas.classList.remove("dragging"); });
     canvas.addEventListener("contextmenu", e=>e.preventDefault());
     canvas.addEventListener("wheel", e=>{ e.preventDefault(); const p=pos(e); if(state.mode==="2d"){ const old=state.view.zoom, next=Math.max(.15,Math.min(5,old*(e.deltaY<0?1.12:.88))); state.view.x=p.x-(p.x-state.view.x)*(next/old); state.view.y=p.y-(p.y-state.view.y)*(next/old); state.view.zoom=next; } else { state.camera.distance=Math.max(180,Math.min(2200,state.camera.distance*(e.deltaY<0?.9:1.1))); } draw(); }, {passive:false});
     function selectNode(n){ state.selected={type:"node",item:n}; document.querySelectorAll(".item").forEach(i=>i.classList.toggle("selected",i.dataset.id==n.id)); renderDetail(state.selected); draw(); }
     function selectEdge(e){ state.selected={type:"edge",item:e}; renderDetail(state.selected); draw(); }
-    function renderDetail(sel){ const kb=$("detailKind"); if(!sel){ kb.className="kind-badge"; kb.removeAttribute("style"); kb.textContent="DETAIL"; $("detailTitle").textContent="No selection"; $("detailMeta").textContent="Run graph search, then click a node or edge."; $("detailBody").innerHTML=""; return; } if(sel.type==="node"){ const n=sel.item, c=colors[n.kind]||"#748094"; kb.className="kind-badge"; kb.style.background=c+"1f"; kb.style.color=c; kb.innerHTML=`<span class="dot" style="background:${c}"></span>${escapeHtml(n.kind.toUpperCase())}`; $("detailTitle").textContent=n.label; $("detailMeta").textContent=n.path||`scan ${n.scanId}`; const rel=relations(n); $("detailBody").innerHTML=`<div class="kv"><div><span class="k">ID</span><span class="v">${n.id}</span></div><div><span class="k">Kind</span><span class="v">${escapeHtml(n.kind)}</span></div>${n.path?`<div><span class="k">Path</span><span class="v">${escapeHtml(n.path)}</span></div>`:""}${n.detail?`<div><span class="k">Detail</span><span class="v">${escapeHtml(n.detail)}</span></div>`:""}</div>${rel}`; } else { const e=sel.item, map=new Map(state.graph.nodes.map(n=>[n.id,n])), a=map.get(e.from), b=map.get(e.to); kb.className="kind-badge"; kb.removeAttribute("style"); kb.textContent="EDGE"; $("detailTitle").textContent=e.kind||e.label||"relationship"; $("detailMeta").textContent=`${a?.label||e.from} -> ${b?.label||e.to}`; $("detailBody").innerHTML=`<div class="kv"><div><span class="k">From</span><span class="v">${escapeHtml(a?.label||e.from)}</span></div><div><span class="k">To</span><span class="v">${escapeHtml(b?.label||e.to)}</span></div><div><span class="k">Kind</span><span class="v">${escapeHtml(e.kind||"")}</span></div><div><span class="k">Weight (corroborating scans)</span><span class="v">${e.weight??1}</span></div>${e.label?`<div><span class="k">Label</span><span class="v">${escapeHtml(e.label)}</span></div>`:""}</div>`; } }
+    function renderDetail(sel){ const kb=$("detailKind"); if(!sel){ kb.className="kind-badge"; kb.removeAttribute("style"); kb.textContent="DETAIL"; $("detailTitle").textContent="No selection"; $("detailMeta").textContent="Run graph search, then click a node or edge."; $("detailBody").innerHTML=""; return; } if(sel.type==="node"){ const n=sel.item, c=colors[n.kind]||"#748094"; kb.className="kind-badge"; kb.style.background=c+"1f"; kb.style.color=c; kb.innerHTML=`<span class="dot" style="background:${c}"></span>${escapeHtml(n.kind.toUpperCase())}`; $("detailTitle").textContent=n.label; $("detailMeta").textContent=n.path||`scan ${n.scanId}`; const rel=relations(n); const canView=n.path&&!["directory","project","author","type","module"].includes(n.kind); const viewBtn=canView?`<button id="viewFileBtn" class="viewfile-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>View file</button>`:""; $("detailBody").innerHTML=`<div class="kv"><div><span class="k">ID</span><span class="v">${n.id}</span></div><div><span class="k">Kind</span><span class="v">${escapeHtml(n.kind)}</span></div><div><span class="k">Connections (degree)</span><span class="v">${n.degree??0}</span></div>${n.path?`<div><span class="k">Path</span><span class="v">${escapeHtml(n.path)}</span></div>`:""}${n.detail?`<div><span class="k">Detail</span><span class="v">${escapeHtml(n.detail)}</span></div>`:""}</div>${viewBtn}${rel}`; if(canView){ const vb=$("viewFileBtn"); if(vb) vb.onclick=()=>openFile(n); } } else { const e=sel.item, map=new Map(state.graph.nodes.map(n=>[n.id,n])), a=map.get(e.from), b=map.get(e.to); kb.className="kind-badge"; kb.removeAttribute("style"); kb.textContent="EDGE"; $("detailTitle").textContent=e.kind||e.label||"relationship"; $("detailMeta").textContent=`${a?.label||e.from} -> ${b?.label||e.to}`; $("detailBody").innerHTML=`<div class="kv"><div><span class="k">From</span><span class="v">${escapeHtml(a?.label||e.from)}</span></div><div><span class="k">To</span><span class="v">${escapeHtml(b?.label||e.to)}</span></div><div><span class="k">Kind</span><span class="v">${escapeHtml(e.kind||"")}</span></div><div><span class="k">Weight (corroborating scans)</span><span class="v">${e.weight??1}</span></div>${e.label?`<div><span class="k">Label</span><span class="v">${escapeHtml(e.label)}</span></div>`:""}</div>`; } }
     function relations(n){ const map=new Map(state.graph.nodes.map(x=>[x.id,x])); const rows=state.graph.edges.filter(e=>e.from===n.id||e.to===n.id).slice(0,18).map(e=>{ const other=map.get(e.from===n.id?e.to:e.from); const c=other?(colors[other.kind]||"#748094"):"#748094"; return `<div class="rel-row" data-id="${other?.id||""}"><span class="rel-kind">${escapeHtml(e.kind)}</span><svg class="arrow" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg><span class="dot" style="background:${c}"></span><span class="tgt">${escapeHtml(other?.label||"")}</span></div>`; }).join(""); setTimeout(()=>document.querySelectorAll(".rel-row[data-id]").forEach(el=>el.onclick=()=>{ const nn=state.graph.nodes.find(x=>String(x.id)===el.dataset.id); if(nn) selectNode(nn); }),0); return `<div class="rel"><h3>Relationships</h3>${rows||'<div class="empty">No visible relationships.</div>'}</div>`; }
     function pos(e){ const r=canvas.getBoundingClientRect(); return {x:e.clientX-r.left,y:e.clientY-r.top}; }
     function distToSegment(px,py,x1,y1,x2,y2){ const dx=x2-x1, dy=y2-y1, l2=dx*dx+dy*dy||1; let t=((px-x1)*dx+(py-y1)*dy)/l2; t=Math.max(0,Math.min(1,t)); return Math.hypot(px-(x1+t*dx),py-(y1+t*dy)); }
     function trim(v,n){ v=String(v||""); return v.length>n?v.slice(0,n-1)+"...":v; }
     function escapeHtml(v){ return String(v??"").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+    // ---- File preview (MS-style code viewer popup) ----
+    // The graph only stores relationships; a node's `path` points at the real
+    // file. Resolve+read it via /api/file and preview it here so a human or AI
+    // can read the content behind a path without leaving the graph.
+    async function openFile(n){
+      if(!n || !n.path) return;
+      $("fileTitle").textContent = String(n.path).split(/[\\/]/).pop();
+      $("fileSub").textContent = n.path + (n.projectId?`  ·  project #${n.projectId}`:"");
+      $("fileBody").innerHTML = `<div class="code-msg" style="color:#8b949e">Loading…</div>`;
+      $("fileModal").hidden = false;
+      try {
+        const data = await api(`/api/file?project=${n.projectId}&path=${encodeURIComponent(n.path)}`);
+        renderFile(data, n);
+      } catch(e) {
+        $("fileBody").innerHTML = `<div class="code-msg" style="color:#f85149">${escapeHtml(e.message||"failed to load")}</div>`;
+      }
+    }
+    function renderFile(data, n){
+      const lines = String(data.content||"").split(/\r?\n/);
+      // Highlight the node's line range if its detail carries one (e.g. "L1597-1608").
+      let a=0, b=-1; const m=/L(\d+)(?:-(\d+))?/.exec((n&&n.detail)||""); if(m){ a=+m[1]; b=m[2]?+m[2]:a; }
+      let rows="";
+      for(let i=0;i<lines.length;i++){ const ln=i+1; const hl=(ln>=a&&ln<=b)?' class="hl"':""; rows+=`<tr${hl}><td class="ln">${ln}</td><td class="code">${escapeHtml(lines[i])||" "}</td></tr>`; }
+      $("fileBody").innerHTML = `<table>${rows}</table>${data.truncated?'<div class="code-note">— truncated: file larger than 512 KB —</div>':""}`;
+      if(a>0){ const el=$("fileBody").querySelector("tr.hl"); if(el) el.scrollIntoView({block:"center"}); }
+    }
+    function closeFile(){ $("fileModal").hidden = true; $("fileBody").innerHTML=""; }
+    $("fileClose").onclick = closeFile;
+    $("fileModal").addEventListener("click", e=>{ if(e.target.id==="fileModal") closeFile(); });
+    addEventListener("keydown", e=>{ if(e.key==="Escape" && !$("fileModal").hidden) closeFile(); });
+
     loadProjects().then(()=>$("graph").click()).catch(e=>$("stats").textContent=e.message);
   </script>
 </body>
@@ -680,6 +870,7 @@ public static class GuiCommand
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(GuiCommand.SearchApiResponse))]
 [JsonSerializable(typeof(GuiCommand.ProjectsApiResponse))]
+[JsonSerializable(typeof(GuiCommand.FileApiResponse))]
 [JsonSerializable(typeof(GraphData))]
 [JsonSerializable(typeof(GraphNode))]
 [JsonSerializable(typeof(GraphEdge))]
