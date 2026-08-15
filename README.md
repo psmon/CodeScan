@@ -44,21 +44,18 @@ Scanning can be launched from the terminal interface with method/comment extract
 
 ![CodeScan TUI scan](Home/img/codescan-tui-scan.png)
 
-### TUI ChatMode (experimental — in development)
+### Designed for AI agents — CLI-first, not a chatbot
 
-There are environments where Claude or Codex simply isn't available — air-gapped corporate networks, security-isolated rooms, or one of the increasingly frequent outages at the major AI vendors. **Your code analysis activity shouldn't have to stop there.** TUI ChatMode runs a Gemma 4 model fully on-device and drives a JSON tool-call loop against CodeScan's SQLite index. *As long as your machine runs, you can keep asking questions about your codebase.*
+CodeScan does **not** host a language model. It is the indexing and retrieval layer an external AI agent (Claude Code, Codex, or an on-device SLM) drives through the CLI. Keeping the model out of the binary is deliberate: it keeps the Native AOT artifact small and dependency-free, so the same binary drops onto a laptop, a CI runner, or an SBC without shipping a multi-GB GGUF or GPU backend.
 
-![CodeScan TUI ChatMode](Home/img/TUI-ChatMode.png)
+An agent composes CodeScan's structured retrieval commands to explore a codebase before reading source directly (which saves tokens):
 
-- **Offline by design** — no network calls after the one-shot model download. The model GGUF lives at `~/.codescan/models/`; the agent loop only touches the local index and the local filesystem.
-- **In-TUI model download** — first launch offers a resumable HTTP download of the default Gemma 4 E4B GGUF (~5 GB). Interrupted? The next attempt resumes from where it stopped via a `.part` file.
-- **CPU + GPU, multi-OS** — Vulkan backend ships alongside the CPU backend, so the same binary runs accelerated on NVIDIA, AMD, and Intel GPUs (and falls back to CPU when no Vulkan loader is present). Native AOT stays portable; no vendor SDK required.
-- **Model-aware tuning** — the start screen probes the GGUF header (`context_length`, layer dims) and enumerates discovered GPUs (Vulkan heap → WMI → nvidia-smi merge). It then recommends a context size that fits the chosen device's VRAM — never blocks you from picking higher.
-- **Tunable response length** — Short (512) / Medium (1024) / Long (2048) / Max (4096) per-turn token caps. Short keeps chit-chat snappy; Long is enough for multi-paragraph code analysis.
-- **Tool-using agent** — Gemma emits GBNF-constrained JSON every turn (`db_search` / `read_file` / `grep_file` / `list_projects` / `project_info` / `project_tree` / `graph_query` / `done`). The `project_tree` view gives the model the codebase's actual folder vocabulary before searching, and every `db_search` hit carries an `abs_path` joined from the project root so `read_file` works in one shot.
-- **Forensic logs** — every chat session writes `~/.codescan/logs/chat-YYYYMMDD_HHmmss.log` with raw model output, and `llama-native.log` captures the underlying llama.cpp diagnostics for postmortem on rare empty-response failures.
+- `codescan search "<query>" --type method|file|doc|comment` — FTS5 full-text lookup
+- `codescan query "MATCH (c:class)-[r:uses_type]->(t:type) LIMIT 20"` — Cypher-like graph query for structured retrieval without SQL access
+- `codescan graph "<query>" --depth 2` — neighborhood expansion around a match
+- `codescan project <id>` / `codescan projects` — project context and indexed metadata
 
-> Status: this surface is actively evolving alongside the on-device SLM landscape (see [Why AOT? — Edge AI trend](#why-aot--edge-ai-trend-and-the-value-of-a-single-binary) below). Expect behavior and the tool catalog to change as we learn from real sessions.
+> An earlier build embedded an on-device Gemma/Nemotron chat loop directly in the TUI. It was removed to keep the CLI light; the retrieval layer is the durable value, and the model belongs on the agent side of the boundary (see [Why AOT? — Edge AI trend](#why-aot--edge-ai-trend-and-the-value-of-a-single-binary) below).
 
 ## Supported Languages
 

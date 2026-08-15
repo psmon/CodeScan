@@ -44,21 +44,18 @@ TUI에서 프로젝트 탐색, 스캔, 프로젝트 관리, 키워드 검색, �
 
 ![CodeScan TUI 스캔](Home/img/codescan-tui-scan.png)
 
-### TUI ChatMode (실험 개발 중)
+### AI 에이전트를 위한 설계 — 챗봇이 아니라 CLI 우선
 
-Claude나 Codex를 자유롭게 쓰지 못하는 상황이 분명히 존재합니다 — 폐쇄망, 보안이 강한 격리된 공간, 그리고 최근 자주 발생하는 핵심 AI 벤더의 장애. **그러한 상황에서도 CodeScan의 코드 분석 활동은 멈추지 않을 수 있습니다.** TUI ChatMode는 Gemma 4 모델을 완전히 온디바이스로 구동하면서 CodeScan의 SQLite 인덱스에 JSON 툴콜 루프를 돌립니다. *내 장비가 돌아간다면, 당신의 코드베이스에 계속 질문할 수 있습니다.*
+CodeScan은 언어 모델을 **내장하지 않습니다.** 외부 AI 에이전트(Claude Code, Codex, 또는 온디바이스 SLM)가 CLI를 통해 구동하는 인덱싱·검색 레이어입니다. 모델을 바이너리 밖에 두는 것은 의도된 설계입니다 — Native AOT 산출물을 작고 의존성 없이 유지해, 수 GB GGUF나 GPU 백엔드를 함께 배포하지 않고도 같은 바이너리를 노트북·CI 러너·SBC에 그대로 떨어뜨릴 수 있게 합니다.
 
-![CodeScan TUI ChatMode](Home/img/TUI-ChatMode.png)
+에이전트는 소스를 직접 읽기 전에 CodeScan의 구조적 검색 명령을 조합해 코드베이스를 탐색합니다(토큰 절약):
 
-- **오프라인 설계** — 1회성 모델 다운로드 이후 어떠한 네트워크 호출도 없습니다. 모델 GGUF는 `~/.codescan/models/`에 두고, 에이전트 루프는 로컬 인덱스와 로컬 파일시스템에만 접근합니다.
-- **TUI 안에서 모델 다운로드** — 첫 실행 시 기본 Gemma 4 E4B GGUF (~5 GB)를 resumable HTTP 다운로드로 가져올 수 있습니다. 중단되어도 `.part` 파일로 이어받기 자동.
-- **CPU + GPU, 멀티 OS** — Vulkan 백엔드가 CPU 백엔드와 함께 패키징되어 같은 바이너리가 NVIDIA / AMD / Intel GPU 모두에서 가속됩니다 (Vulkan 로더가 없으면 CPU 폴백). Native AOT 단일 바이너리, 벤더 SDK 불필요.
-- **모델 / 장비-인지 튜닝** — 시작 화면이 GGUF 헤더(`context_length`, layer 차원)를 직접 읽고, 발견된 GPU(Vulkan heap → WMI → nvidia-smi 머지)도 같이 리스트업합니다. 선택한 디바이스 VRAM에 맞는 컨텍스트 권장값을 표시 — 단, 막지는 않습니다.
-- **응답 길이 선택** — 매 턴 토큰 cap을 Short(512) / Medium(1024) / Long(2048) / Max(4096) 중에서 고를 수 있습니다. 짧은 잡담은 Short로 빠르게, 멀티 단락 코드 분석은 Long으로.
-- **툴 사용 에이전트** — Gemma는 매 턴 GBNF 제약 JSON을 발행합니다 (`db_search` / `read_file` / `grep_file` / `list_projects` / `project_info` / `project_tree` / `graph_query` / `done`). `project_tree`는 검색 전 코드베이스의 실제 폴더 어휘를 모델에 보여주고, `db_search` 결과의 모든 hit는 project root와 결합된 `abs_path`를 함께 돌려줘 `read_file`이 한 번에 성공합니다.
-- **포렌식 로그** — 모든 채팅 세션이 `~/.codescan/logs/chat-YYYYMMDD_HHmmss.log`에 raw 모델 출력까지 기록되고, `llama-native.log`는 그 아래 llama.cpp 진단 메시지를 캡처합니다. 드물게 발생하는 빈 응답 같은 이슈의 사후 추적에 사용됩니다.
+- `codescan search "<query>" --type method|file|doc|comment` — FTS5 전문검색
+- `codescan query "MATCH (c:class)-[r:uses_type]->(t:type) LIMIT 20"` — SQL 없이 구조적 검색을 위한 Cypher-like 그래프 쿼리
+- `codescan graph "<query>" --depth 2` — 매치 주변 이웃 확장
+- `codescan project <id>` / `codescan projects` — 프로젝트 컨텍스트와 인덱싱된 메타데이터
 
-> 현재 상태: 이 표면은 온디바이스 SLM 흐름에 맞춰 적극적으로 진화 중입니다 (하단 [Why AOT? — Edge AI 트렌드와 단일 바이너리의 가치](#why-aot--edge-ai-트렌드와-단일-바이너리의-가치) 참조). 실제 세션에서 얻는 학습에 따라 동작과 툴 카탈로그가 바뀔 수 있습니다.
+> 이전 빌드는 온디바이스 Gemma/Nemotron 챗 루프를 TUI에 직접 내장했었습니다. CLI를 가볍게 유지하기 위해 제거했습니다 — 지속 가치는 검색 레이어에 있고, 모델은 경계의 에이전트 쪽에 있어야 합니다 (하단 [Why AOT? — Edge AI 트렌드와 단일 바이너리의 가치](#why-aot--edge-ai-트렌드와-단일-바이너리의-가치) 참조).
 
 ## 지원 언어
 

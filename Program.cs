@@ -2,9 +2,6 @@ using System.Reflection;
 using CodeScan.Commands;
 using CodeScan.Services;
 using CodeScan.Tui;
-#if DEBUG
-using CodeScan.Services.Llm;
-#endif
 
 namespace CodeScan;
 
@@ -20,21 +17,6 @@ class Program
     static int Main(string[] args)
     {
         Console.OutputEncoding = System.Text.Encoding.UTF8;
-
-#if DEBUG
-        // Develop-only PerfMon-backed GPU memory telemetry. Skips silently
-        // on non-Windows / missing counters. Stripped from Release builds.
-        //
-        // No console listener is attached here on purpose — interleaved
-        // stdout would corrupt the TUI's terminal rendering and pollute
-        // smoke-test output. The "CodeScan.Gpu" Meter is still registered,
-        // so external tools (dotnet-counters / OTel exporters) pick it up
-        // directly. To dump readings locally during a CLI session, call
-        // GpuMetricsCollector.AttachConsoleListener() explicitly from a
-        // non-TUI entry point.
-        if (OperatingSystem.IsWindows())
-            GpuMetricsCollector.StartIfWindows();
-#endif
 
         if (args.Length == 0)
         {
@@ -79,15 +61,12 @@ class Program
             "project-update" => RunProjectUpdate(commandArgs),
             "project-delete" => RunProjectDelete(commandArgs),
             "tui" => RunTui(),
-            "ask" => RunAsk(commandArgs),
             "semantic" => RunSemantic(commandArgs),
             "graph-edit" => RunGraphEdit(commandArgs),
             "help" => RunHelp(commandArgs),
             _ => UnknownCommand(command)
         };
     }
-
-    static int RunAsk(string[] args) => new AskCommand().Execute(args);
 
     static int RunSemantic(string[] args) => new SemanticCommand().Execute(args);
 
@@ -532,7 +511,6 @@ class Program
             case "project-update": PrintProjectUpdateHelp(); break;
             case "project-delete": PrintProjectDeleteHelp(); break;
             case "tui": Console.WriteLine("  codescan tui - Interactive TUI mode."); break;
-            case "ask": AskCommand.PrintHelp(); break;
             default:
                 Console.WriteLine($"Unknown command: {args[0]}");
                 PrintHelp();
@@ -601,7 +579,6 @@ class Program
           project-update <id> [opts]   Update project fields (path, addinfo, source)
           project-delete <id>          Delete a project from DB
           tui                          Interactive TUI mode
-          ask "<question>"             Ask the on-device agent (non-interactive chat)
           semantic <sub>               Compiler-backed analysis via docker (Phase 1 PoC)
           graph-edit <sub>             Manually curate graph nodes/edges (LLM-friendly)
           help [command]               Show help

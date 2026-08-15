@@ -87,7 +87,7 @@ public class TuiApp
 
 public class MainView : Toplevel
 {
-    private enum Mode { RootSelect, DirBrowse, ScanOptions, Scanning, Results, Projects, SearchInput, SearchResults, ProjectDetail, Chat }
+    private enum Mode { RootSelect, DirBrowse, ScanOptions, Scanning, Results, Projects, SearchInput, SearchResults, ProjectDetail }
 
     private Mode _mode = Mode.RootSelect;
     private string _currentPath = "";
@@ -140,26 +140,9 @@ public class MainView : Toplevel
     private ObservableCollection<string> _listItems = [];
     private List<string> _dirEntries = [];
 
-    // Chat panel — owns model load + agent loop. Lazily created on first entry.
-    private ChatView? _chatView;
-
     public MainView()
     {
         Title = "CodeScan TUI";
-
-        // Fire-and-forget GPU enumeration on a background thread so the
-        // first Chat-mode open finds a warm cache instead of paying the
-        // ~1–3 s probe cost (vulkaninfo full dump + PowerShell startup +
-        // nvidia-smi try) synchronously. Doing this here (not in ChatView)
-        // keeps the work off the Terminal.Gui v2 event loop entirely — an
-        // earlier attempt inside ChatView with Application.Invoke produced
-        // a TUI-corruption side-effect when the invoke raced the Chat
-        // screen transition.
-        _ = Task.Run(() =>
-        {
-            try { CodeScan.Services.Llm.GpuEnumerator.Enumerate(); }
-            catch { /* probe failure is harmless — ChatView re-tries on entry */ }
-        });
 
         // Black background + white text color scheme
         var darkScheme = new ColorScheme
@@ -404,11 +387,6 @@ public class MainView : Toplevel
         // ignore when typing in text field
         if (_txtInclude.HasFocus || _txtSearch.HasFocus || _txtAddInfo.HasFocus || _txtUpdatePath.HasFocus) return;
 
-        // While the chat input has focus the user may be typing Korean ('ㅂ' = Q,
-        // 'ㅎ' = H) — those keystrokes must reach the TextField untouched instead
-        // of triggering Back / Home.
-        if (_mode == Mode.Chat && _chatView != null && _chatView.IsInputFocused) return;
-
         if (IsQKey(key))
         {
             key.Handled = true;
@@ -471,31 +449,7 @@ public class MainView : Toplevel
             case Mode.ProjectDetail:
                 ShowProjects();
                 break;
-
-            case Mode.Chat:
-                // ChatView swallows Back during inference / chat to confirm
-                // unloading the 5 GB model. Only if it returns false do we
-                // actually drop the panel and pop to the root menu.
-                if (_chatView != null && _chatView.HandleBack()) return;
-                _chatView?.Hide();
-                ShowRootSelect();
-                break;
         }
-    }
-
-    private void ShowChat()
-    {
-        _mode = Mode.Chat;
-        _titleLabel.Text = "Chat — on-device LLM (Gemma 4 / Nemotron 3 Nano)";
-        _pathLabel.Text = "Loaded model stays in RAM until you exit Chat";
-        _hintLabel.Text = "[Q] Back / End chat  [H] Home";
-
-        _listView.Visible = false;
-        _resultView.Visible = false;
-        HideOptions();
-
-        _chatView ??= new ChatView(this, () => ShowRootSelect());
-        _chatView.Show();
     }
 
     private void OnItemSelected(object? sender, ListViewItemEventArgs e)
@@ -510,7 +464,6 @@ public class MainView : Toplevel
             if (selected is "__EXIT__") { Application.RequestStop(); return; }
             if (selected is "__SEARCH__") { ShowSearchInput(); return; }
             if (selected is "__PROJECTS__") { ShowProjects(); return; }
-            if (selected is "__CHAT__") { ShowChat(); return; }
             _pathHistory.Clear();
             _currentPath = selected;
             ShowDirBrowse(_currentPath);
@@ -1424,8 +1377,6 @@ public class MainView : Toplevel
         _dirEntries.Add("__SEARCH__");
         _listItems.Add("  [Projects] View indexed projects");
         _dirEntries.Add("__PROJECTS__");
-        _listItems.Add("  [Chat] On-device LLM (Gemma 4 / Nemotron 3 Nano)");
-        _dirEntries.Add("__CHAT__");
         _listItems.Add("  ----------------");
         _dirEntries.Add("__SEP__");
         _listItems.Add("  [Exit]");

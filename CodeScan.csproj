@@ -40,24 +40,6 @@
     <ItemGroup>
         <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.5" />
         <PackageReference Include="Terminal.Gui" Version="2.0.0-beta.*" />
-        <!-- On-device LLM (Gemma 4 e4b GGUF) for the TUI Chat feature.
-             The Backend.Cpu package ships native libs for win-x64 / linux-x64 /
-             osx-arm64 / osx-x64 under runtimes/, auto-resolved by the host RID
-             so the binary stays multi-OS without per-platform builders. -->
-        <PackageReference Include="LLamaSharp" Version="0.27.0" />
-        <PackageReference Include="LLamaSharp.Backend.Cpu" Version="0.27.0" />
-        <!-- Vulkan backend lets the TUI Chat offload Gemma layers onto any
-             discrete/integrated GPU (NVIDIA/AMD/Intel) without locking us to
-             CUDA. Mirrors AgentZeroLite's cross-vendor choice; the Cpu
-             backend stays as the fallback path when GpuLayerCount=0. -->
-        <PackageReference Include="LLamaSharp.Backend.Vulkan" Version="0.27.0" />
-    </ItemGroup>
-
-    <!-- Develop-only GPU memory telemetry. PerformanceCounter is Windows-PerfMon
-         only and uses registry reflection internally — kept off Release / AOT
-         publish so the trimmed binary stays portable across OSes. -->
-    <ItemGroup Condition="'$(Configuration)' == 'Debug' AND '$(OS)' == 'Windows_NT'">
-        <PackageReference Include="System.Diagnostics.PerformanceCounter" Version="10.0.0" />
     </ItemGroup>
 
     <!-- ============================================================
