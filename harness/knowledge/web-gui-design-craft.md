@@ -1,3 +1,12 @@
+---
+name: web-gui-design-craft
+type: knowledge
+domain: design
+description: 정적 웹 뷰어(Home/harness-view/)의 디자인·인터랙션 검수 기준.
+governs: ["Home/harness-view/**"]
+anchor: auto
+---
+
 # web-gui-design-craft.md — 웹 GUI 디자인·인터랙션 검수 기준
 
 CodeScan의 정적 웹 뷰어(`Home/harness-view/`)의 **디자인 완성도와 인터랙션 품질**을

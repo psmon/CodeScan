@@ -1,4 +1,20 @@
+---
+name: semantic-analyzer-docker
+type: knowledge
+domain: semantic
+description: 언어별 컴파일러를 도커로 격리해 의미분석을 머지하는 전략 (무거운 최후수단).
+governs: ["Services/Semantic/**", "Services/SourceGraphAnalyzer.cs", "docker/**"]
+anchor: auto
+---
+
 # Semantic Analyzer Docker Plan
+
+> ⚠️ **전략 역전 (v0.12.0, 2026-08-15)** — 이 문서는 "도커 우선"을 전제했으나,
+> 매 스캔 도커 빌드는 오버엔지니어링이라 판단해 전략이 뒤집혔다:
+> **무빌드 산출물 하베스트를 우선**(`.class`/`.d.ts`/`.dll`/매니페스트를 상대경로에서
+> 읽음, 툴체인 0), **도커는 정밀도가 꼭 필요한 소수 케이스의 opt-in 최후수단**.
+> 상세: [[../.claude/skills/testsample-build/SKILL.md]], [[doc-code-linkage]].
+> 아래 도커 계획은 그 최후수단 경로의 참조 스펙으로만 유효하다.
 
 > 언어별 컴파일러/툴체인을 도커 컨테이너로 격리하여 의미 분석(semantic analysis) 결과를
 > CodeScan 그래프에 머지하는 전략 — regex 전략의 한계를 극복.

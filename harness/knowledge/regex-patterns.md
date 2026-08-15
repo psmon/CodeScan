@@ -3,6 +3,8 @@ name: regex-patterns
 type: knowledge
 domain: parser
 description: CodeScan의 7개 언어 정규식 패턴 설계 원칙과 AOT 규칙.
+governs: ["Services/Analyzers/Languages/**", "Services/CommentExtractor.cs", "Services/SourceAnalyzer.cs"]
+anchor: auto
 ---
 
 # 정규식 패턴 가이드 (CodeScan)

@@ -1,3 +1,12 @@
+---
+name: actor-model-cross-toolkit
+type: knowledge
+domain: actor
+description: 액터 모델의 툴킷별 부모-자식 표현 차이와, CodeScan이 미래에 도입할 그래프 엣지/매처 전략.
+governs: []
+anchor: none  # 미래 전략 명세(설계-고아, Type C) — 현재 코드에 앵커 없음. 도입 시 governs 채움.
+---
+
 # Actor Model — Cross-Toolkit Knowledge
 
 > 액터 모델은 **언어 스펙이 아니라 툴킷 스펙**으로 만들어지는 부모-자식 관계를 가진다.

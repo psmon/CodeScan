@@ -3,6 +3,8 @@ name: aot-rules
 type: knowledge
 domain: build
 description: .NET Native AOT 단일 바이너리 배포를 위한 규칙과 위험 API 목록.
+governs: ["**/*.cs", "Services/Analyzers/**", "[GeneratedRegex]", "PublishAot"]
+anchor: auto
 ---
 
 # AOT 규칙 (CodeScan)
