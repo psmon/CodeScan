@@ -425,7 +425,7 @@ All data is stored under `~/.codescan/`:
 ```
 ~/.codescan/
 ├── db/
-│   └── codescan.db      # SQLite database with FTS5 index
+│   └── codescan-v2.db      # SQLite database with FTS5 index
 └── logs/
     └── *.log            # Scan logs (--devmode only)
 ```

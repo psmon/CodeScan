@@ -131,7 +131,7 @@ Windows는 `.exe`, Linux/macOS는 실행 권한이 있는 `codescan` 바이너�
 | 종류 | 위치 | 관리 주체 |
 |------|------|----------|
 | 실행 바이너리 | 패키지 매니저 표준 경로 (winget portable / npm bin / brew prefix) | 패키지 매니저 |
-| 사용자 DB | `~/.codescan/db/codescan.db` | CodeScan (`AppPaths.cs`) |
+| 사용자 DB | `~/.codescan/db/codescan-v2.db` | CodeScan (`AppPaths.cs`) |
 | 로그 | `~/.codescan/logs/` | CodeScan |
 | 사용자 설정 | `~/.codescan/config/` | CodeScan |
 
@@ -564,7 +564,7 @@ codescan gui start --port 8085
 설치/제거 후 다음이 보존되는지 확인:
 
 ```text
-~/.codescan/db/codescan.db
+~/.codescan/db/codescan-v2.db
 ~/.codescan/logs/
 ~/.codescan/config/
 ```
@@ -590,7 +590,7 @@ codescan search "main"
 
 - 패키지 매니저 표준 흐름을 사용한다 (`winget upgrade`, `npm update -g`, `brew upgrade`).
 - DB 스키마가 변경된 경우 첫 실행 시 자동 마이그레이션을 수행한다.
-- 마이그레이션 전 `~/.codescan/db/codescan.db.backup-{timestamp}`로 자동 백업한다.
+- 마이그레이션 전 `~/.codescan/db/codescan-v2.db.backup-{timestamp}`로 자동 백업한다.
 - 마이그레이션 실패 시 백업으로부터 자동 롤백하고 사용자에게 안내한다.
 
 ### 다운그레이드 / 롤백

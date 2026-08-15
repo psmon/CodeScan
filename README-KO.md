@@ -425,7 +425,7 @@ codescan list /path --depth 3 --blame
 ```
 ~/.codescan/
 ├── db/
-│   └── codescan.db      # FTS5 인덱스가 포함된 SQLite DB
+│   └── codescan-v2.db      # FTS5 인덱스가 포함된 SQLite DB
 └── logs/
     └── *.log            # 스캔 로그 (--devmode 한정)
 ```

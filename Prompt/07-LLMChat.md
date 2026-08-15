@@ -1,3 +1,9 @@
+> ⚠️ **SUPERSEDED / 제거됨 (v0.12.0)** — 이 문서가 설계한 온디바이스 LLM 챗봇
+> (TUI ChatMode / `codescan ask`)은 CLI를 가볍게 유지하기 위해 **제거**되었습니다
+> (`LlmHost`/`ChatView`/`AskCommand` 등 코드에 더 이상 없음). 이 파일은 설계 이력으로만
+> 보존됩니다. 현재 방향은 "AI 에이전트가 CLI를 구동" — [README](../README.md)의
+> "Designed for AI agents — CLI-first" 섹션과 [CLAUDE.md](../CLAUDE.md)를 참고하세요.
+
 CodeScan TUI기능에서 LLM을 이용하는 ChatBot기능을 구현하려고합니다.
 
 -요구사항 : 인터넷이 안되는 환경에서 CodeScan이 제공하는 기능을
