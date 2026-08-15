@@ -85,9 +85,11 @@ governs: []
    파싱해 `doc -[governs]-> file|class` 엣지를 생성(heading `mentions`를 넘어). →
    **정책 문서도 1급으로 연결 가능**해짐. (규칙-고아 B 해소)
 
-2. **`doc-orphan` 검출.** knowledge/policy 문서 중 코드 링크가 0(`mentions`도
-   `governs`도 없음)이고 `anchor: none`도 아닌 것 → **방치 고아**로 플래그.
-   `anchor: none`은 정당 고아로 통과.
+2. **`doc-orphan` 검출 (✅ 구현됨, `codescan doc-orphan`).** 코드 링크가 0
+   (`mentions` 없음)인 .md를 찾아 frontmatter로 분류: **NEGLECTED**(앵커 없음 →
+   방치 고아), **DECLARED**(`governs:` 있음), **INTENTIONAL**(`anchor: none`).
+   방치 고아에는 **본문에서 발견한 후보 코드 클래스**를 함께 제시 → AI가 그걸 분석해
+   `governs:` 앵커나 graph-edit 링크로 **재연결**하도록 유도. (`Commands/DocOrphanCommand.cs`)
 
 3. **`doc-stale` = 앵커 드리프트 + git 날짜.** 문서의 governed 코드가 문서 최종
    커밋 이후 변경됨 → 재검토 플래그. (`mentions`/`governs` 엣지 + git mtime — 실험 2의

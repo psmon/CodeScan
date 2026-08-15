@@ -47,7 +47,7 @@ Tests use inline string arrays as input, no external test fixtures.
 - `AppPaths` — centralizes all `~/.codescan/` path management.
 - `TuiApp` — Terminal.Gui v2 (NetDriver) state-machine UI.
 
-**Commands** (in `Commands/`): `ListCommand` (scan+index), `SearchCommand` (hybrid search), `ProjectsCommand`, `ProjectCommand`, `ProjectAddInfoCommand`, `ProjectUpdateCommand`, `ProjectDeleteCommand`.
+**Commands** (in `Commands/`): `ListCommand` (scan+index), `SearchCommand` (hybrid search), `GraphCommand` (graph search & Cypher-like/variable-hop query), `GraphEditCommand` (graph curation), `GuiCommand` (local web graph viewer), `DocOrphanCommand` (orphan-doc detection — docs with no code link), `SemanticCommand` (docker semantic PoC), `ProjectsCommand`, `ProjectCommand`, `ProjectAddInfoCommand`, `ProjectUpdateCommand`, `ProjectDeleteCommand`.
 
 ## Key Design Decisions
 

@@ -170,4 +170,51 @@ public class GraphQueryStoreTests
             try { if (File.Exists(dbPath)) File.Delete(dbPath); } catch { }
         }
     }
+
+    [Fact]
+    public void FindUnlinkedMarkdownDocs_FlagsDocsWithNoCodeLink()
+    {
+        var dbPath = Path.Combine(Path.GetTempPath(), $"codescan_test_{Guid.NewGuid():N}.db");
+        var tempDir = Path.Combine(Path.GetTempPath(), $"codescan_test_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            using var db = new SqliteStore(dbPath);
+            var projectId = db.UpsertProject(Path.GetFullPath(tempDir));
+            db.InsertScan(projectId,
+            [
+                new FileEntry
+                {
+                    FullPath = "Widget.cs", RelativePath = "Widget.cs", Name = "Widget.cs",
+                    Size = 1, IsDirectory = false, Depth = 0,
+                    Methods = [ new MethodEntry { ClassName = "Widget", MethodName = "Render", StartLine = 1, EndLine = 1 } ]
+                },
+                // Linked: a heading names the class -> mentions edge.
+                new FileEntry
+                {
+                    FullPath = "linked.md", RelativePath = "linked.md", Name = "linked.md",
+                    Size = 1, IsDirectory = false, Depth = 0,
+                    Markdown = new MarkdownDoc { Body = "about Widget", Headings = [ new MarkdownHeading { Level = 1, Text = "Widget guide", Line = 1 } ] }
+                },
+                // Orphan: heading names no code class.
+                new FileEntry
+                {
+                    FullPath = "orphan.md", RelativePath = "orphan.md", Name = "orphan.md",
+                    Size = 1, IsDirectory = false, Depth = 0,
+                    Markdown = new MarkdownDoc { Body = "general prose here", Headings = [ new MarkdownHeading { Level = 1, Text = "general notes", Line = 1 } ] }
+                }
+            ]);
+
+            var orphans = db.FindUnlinkedMarkdownDocs(projectId);
+            Assert.Contains("orphan.md", orphans);
+            Assert.DoesNotContain("linked.md", orphans);   // linked via a mentions edge
+            Assert.Contains("Widget", db.GetClassLabels(projectId));
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, true); } catch { }
+            try { if (File.Exists(dbPath)) File.Delete(dbPath); } catch { }
+        }
+    }
 }

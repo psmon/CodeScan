@@ -63,6 +63,7 @@ class Program
             "tui" => RunTui(),
             "semantic" => RunSemantic(commandArgs),
             "graph-edit" => RunGraphEdit(commandArgs),
+            "doc-orphan" or "orphans" => RunDocOrphan(commandArgs),
             "help" => RunHelp(commandArgs),
             _ => UnknownCommand(command)
         };
@@ -74,6 +75,12 @@ class Program
     {
         using var db = OpenDb();
         return new GraphEditCommand(db).Execute(args);
+    }
+
+    static int RunDocOrphan(string[] args)
+    {
+        using var db = OpenDb();
+        return new DocOrphanCommand(db).Execute(args);
     }
 
     static int RunScan(string[] args, GlobalOptions global)
@@ -520,6 +527,7 @@ class Program
             case "project-update": PrintProjectUpdateHelp(); break;
             case "project-delete": PrintProjectDeleteHelp(); break;
             case "tui": Console.WriteLine("  codescan tui - Interactive TUI mode."); break;
+            case "doc-orphan": case "orphans": DocOrphanCommand.PrintHelp(); break;
             default:
                 Console.WriteLine($"Unknown command: {args[0]}");
                 PrintHelp();
@@ -590,6 +598,7 @@ class Program
           tui                          Interactive TUI mode
           semantic <sub>               Compiler-backed analysis via docker (Phase 1 PoC)
           graph-edit <sub>             Manually curate graph nodes/edges (LLM-friendly)
+          doc-orphan                   Find docs with no code linkage (orphans) + relink candidates
           help [command]               Show help
 
         Global Options:

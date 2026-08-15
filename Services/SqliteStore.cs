@@ -1894,6 +1894,52 @@ public sealed class SqliteStore : IResultStore, IDisposable
         return cmd.ExecuteNonQuery() > 0;
     }
 
+    // ========================
+    // Orphan-doc detection (doc↔code linkage — see harness/knowledge/doc-code-linkage.md)
+    // ========================
+
+    /// <summary>
+    /// Markdown files that have NO code linkage: none of their headings carry a
+    /// `mentions` edge to a code class. These are orphan candidates — a doc that
+    /// the graph can't connect to any code. Frontmatter `anchor`/`governs` is
+    /// evaluated by the caller (it reads the file) to separate intentional
+    /// orphans and already-declared anchors from neglected ones.
+    /// </summary>
+    public List<string> FindUnlinkedMarkdownDocs(long? projectId)
+    {
+        var list = new List<string>();
+        using var cmd = _conn.CreateCommand();
+        var scope = projectId.HasValue ? "f.project_id = @pid" : "1 = 1";
+        cmd.CommandText = $"""
+            SELECT DISTINCT f.path FROM graph_nodes f
+            WHERE {scope} AND f.state = 'active' AND f.kind = 'file' AND f.path LIKE '%.md'
+              AND NOT EXISTS (
+                SELECT 1 FROM graph_edges hh
+                JOIN graph_nodes h ON h.id = hh.to_node_id AND h.kind = 'heading'
+                JOIN graph_edges m ON m.from_node_id = h.id AND m.kind = 'mentions' AND m.state = 'active'
+                WHERE hh.from_node_id = f.id AND hh.kind = 'has_heading' AND hh.state = 'active')
+            ORDER BY f.path
+            """;
+        if (projectId.HasValue) cmd.Parameters.AddWithValue("@pid", projectId.Value);
+        using var r = cmd.ExecuteReader();
+        while (r.Read()) if (!r.IsDBNull(0)) list.Add(r.GetString(0));
+        return list;
+    }
+
+    /// <summary>Distinct active class labels for a project — the vocabulary an
+    /// orphan doc's body is matched against to propose re-linking candidates.</summary>
+    public HashSet<string> GetClassLabels(long? projectId)
+    {
+        var set = new HashSet<string>(StringComparer.Ordinal);
+        using var cmd = _conn.CreateCommand();
+        var scope = projectId.HasValue ? "project_id = @pid AND " : "";
+        cmd.CommandText = $"SELECT DISTINCT label FROM graph_nodes WHERE {scope}state = 'active' AND kind = 'class'";
+        if (projectId.HasValue) cmd.Parameters.AddWithValue("@pid", projectId.Value);
+        using var r = cmd.ExecuteReader();
+        while (r.Read()) if (!r.IsDBNull(0)) set.Add(r.GetString(0));
+        return set;
+    }
+
     public void Dispose()
     {
         _conn.Dispose();
