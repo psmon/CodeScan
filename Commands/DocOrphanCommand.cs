@@ -35,31 +35,18 @@ public sealed class DocOrphanCommand
             }
         }
 
-        projectId ??= _db.GetLatestProjectId();
-        if (projectId is null)
+        var result = Analyze(projectId);
+        if (result.ProjectMissing)
         {
             Console.Error.WriteLine("No projects found. Run `codescan scan <path>` first.");
             return 1;
         }
 
-        var project = _db.GetProject(projectId.Value);
-        var root = project?.RootPath;
-        var unlinked = _db.FindUnlinkedMarkdownDocs(projectId);
-        var classLabels = _db.GetClassLabels(projectId);
+        var neglected = result.Neglected;
+        var declared = result.Declared;
+        var intentional = result.Intentional;
 
-        var neglected = new List<(string Path, List<string> Candidates, bool HasFrontmatter)>();
-        var intentional = new List<string>();
-        var declared = new List<string>();
-
-        foreach (var rel in unlinked)
-        {
-            var (anchor, hasGoverns, hasFrontmatter, body) = ReadFrontmatterAndBody(root, rel);
-            if (string.Equals(anchor, "none", StringComparison.OrdinalIgnoreCase)) { intentional.Add(rel); continue; }
-            if (hasGoverns) { declared.Add(rel); continue; }
-            neglected.Add((rel, CandidateClasses(body, classLabels), hasFrontmatter));
-        }
-
-        Console.WriteLine($"=== Orphan doc scan — project #{projectId} ({unlinked.Count} md files with no code link) ===\n");
+        Console.WriteLine($"=== Orphan doc scan — project #{result.ProjectId} ({result.TotalUnlinked} md files with no code link) ===\n");
 
         Console.WriteLine($"NEGLECTED orphans ({neglected.Count}) — no `mentions`, no `governs`, no `anchor: none`:");
         if (neglected.Count == 0) Console.WriteLine("  (none)");
@@ -112,6 +99,39 @@ public sealed class DocOrphanCommand
                 a doc; prefer the frontmatter route for orphan docs.
             """);
         return 0;
+    }
+
+    /// <summary>
+    /// Pure analysis (no console I/O) shared by the CLI and the TUI. Resolves the
+    /// project (defaults to latest scanned), then classifies every markdown doc
+    /// the graph can't link to code into neglected / declared / intentional.
+    /// </summary>
+    public DocOrphanResult Analyze(long? projectId)
+    {
+        projectId ??= _db.GetLatestProjectId();
+        if (projectId is null)
+            return new DocOrphanResult { ProjectMissing = true };
+
+        var project = _db.GetProject(projectId.Value);
+        var root = project?.RootPath;
+        var unlinked = _db.FindUnlinkedMarkdownDocs(projectId);
+        var classLabels = _db.GetClassLabels(projectId);
+
+        var result = new DocOrphanResult
+        {
+            ProjectId = projectId.Value,
+            TotalUnlinked = unlinked.Count
+        };
+
+        foreach (var rel in unlinked)
+        {
+            var (anchor, hasGoverns, hasFrontmatter, body) = ReadFrontmatterAndBody(root, rel);
+            if (string.Equals(anchor, "none", StringComparison.OrdinalIgnoreCase)) { result.Intentional.Add(rel); continue; }
+            if (hasGoverns) { result.Declared.Add(rel); continue; }
+            result.Neglected.Add(new OrphanDoc(rel, CandidateClasses(body, classLabels), hasFrontmatter));
+        }
+
+        return result;
     }
 
     // Read the YAML-ish frontmatter (anchor / governs) and the body after it.
@@ -206,4 +226,18 @@ public sealed class DocOrphanCommand
             See: harness/knowledge/doc-code-linkage.md
             """);
     }
+}
+
+/// <summary>A neglected orphan doc plus the class names its body mentions.</summary>
+public sealed record OrphanDoc(string Path, List<string> Candidates, bool HasFrontmatter);
+
+/// <summary>Structured orphan-doc analysis shared by CLI and TUI renderers.</summary>
+public sealed class DocOrphanResult
+{
+    public long ProjectId { get; set; }
+    public int TotalUnlinked { get; set; }
+    public bool ProjectMissing { get; set; }
+    public List<OrphanDoc> Neglected { get; } = [];
+    public List<string> Declared { get; } = [];
+    public List<string> Intentional { get; } = [];
 }

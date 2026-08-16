@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Runtime.InteropServices;
 using Terminal.Gui;
+using CodeScan.Commands;
 using CodeScan.Services;
 using CodeScan.Services.Diagnostics;
 
@@ -97,12 +98,16 @@ public class MainView : Toplevel
     // current project context (for project detail/addinfo/source update)
     private long _currentProjectId = 0;
     private bool _resultsFromSourceUpdate = false;
+    private bool _resultsFromDocOrphan = false;
 
     // scan options
     private bool _optTree = true;
     private bool _optDetail = true;
     private bool _optStats = true;
+    private bool _optFull = false;
     private string _optInclude = "";
+    private string _optExclude = "";
+    private string _optDepth = "";
 
     // UI
     private readonly Label _titleLabel;
@@ -116,13 +121,20 @@ public class MainView : Toplevel
     private readonly CheckBox _chkTree;
     private readonly CheckBox _chkDetail;
     private readonly CheckBox _chkStats;
+    private readonly CheckBox _chkFull;
     private readonly TextField _txtInclude;
+    private readonly TextField _txtExclude;
+    private readonly TextField _txtDepth;
     private readonly Button _btnExecute;
     private readonly Label _lblInclude;
+    private readonly Label _lblExclude;
+    private readonly Label _lblDepth;
 
     // search controls
     private readonly Label _lblSearch;
     private readonly TextField _txtSearch;
+    private readonly Label _lblType;
+    private readonly TextField _txtType;
     private readonly Button _btnSearch;
     private readonly Button _btnGraphSearch;
     private readonly Button _btnGraphQuery;
@@ -220,7 +232,7 @@ public class MainView : Toplevel
         _chkTree = new CheckBox
         {
             Text = "Tree output (--tree)",
-            X = 3, Y = 4,
+            X = 3, Y = 3,
             CheckedState = CheckState.Checked,
             Visible = false
         };
@@ -228,7 +240,7 @@ public class MainView : Toplevel
         _chkDetail = new CheckBox
         {
             Text = "Method analysis + git blame (--detail)",
-            X = 3, Y = 6,
+            X = 3, Y = 4,
             CheckedState = CheckState.Checked,
             Visible = false
         };
@@ -236,19 +248,42 @@ public class MainView : Toplevel
         _chkStats = new CheckBox
         {
             Text = "Include stats (--stats)",
-            X = 3, Y = 8,
+            X = 3, Y = 5,
             CheckedState = CheckState.Checked,
+            Visible = false
+        };
+
+        _chkFull = new CheckBox
+        {
+            Text = "Rebuild graph from scratch (--full) [off = incremental reconcile]",
+            X = 3, Y = 6,
+            CheckedState = CheckState.UnChecked,
             Visible = false
         };
 
         _lblInclude = new Label
         {
             Text = "Include extensions (empty = all):",
-            X = 3, Y = 10,
+            X = 3, Y = 8,
             Visible = false
         };
 
         _txtInclude = new TextField
+        {
+            Text = " ",
+            X = 3, Y = 9,
+            Width = 40,
+            Visible = false
+        };
+
+        _lblExclude = new Label
+        {
+            Text = "Exclude dirs (comma-sep, empty = defaults):",
+            X = 3, Y = 10,
+            Visible = false
+        };
+
+        _txtExclude = new TextField
         {
             Text = " ",
             X = 3, Y = 11,
@@ -256,10 +291,25 @@ public class MainView : Toplevel
             Visible = false
         };
 
+        _lblDepth = new Label
+        {
+            Text = "Max depth (empty = unlimited):",
+            X = 3, Y = 12,
+            Visible = false
+        };
+
+        _txtDepth = new TextField
+        {
+            Text = " ",
+            X = 3, Y = 13,
+            Width = 12,
+            Visible = false
+        };
+
         _btnExecute = new Button
         {
             Text = ">>> Run Scan <<<",
-            X = 3, Y = 13,
+            X = 3, Y = 15,
             Visible = false
         };
         _btnExecute.Accepting += OnExecuteScan;
@@ -278,10 +328,23 @@ public class MainView : Toplevel
             Width = 50,
             Visible = false
         };
+        _lblType = new Label
+        {
+            Text = "Type filter (blank=all): method|file|doc|doc-meta|heading|comment|commit",
+            X = 3, Y = 7,
+            Visible = false
+        };
+        _txtType = new TextField
+        {
+            Text = " ",
+            X = 3, Y = 8,
+            Width = 20,
+            Visible = false
+        };
         _btnSearch = new Button
         {
             Text = ">>> Search <<<",
-            X = 3, Y = 7,
+            X = 3, Y = 10,
             Visible = false
         };
         _btnSearch.Accepting += OnExecuteSearch;
@@ -289,7 +352,7 @@ public class MainView : Toplevel
         _btnGraphSearch = new Button
         {
             Text = ">>> Graph Search <<<",
-            X = 22, Y = 7,
+            X = 22, Y = 10,
             Visible = false
         };
         _btnGraphSearch.Accepting += OnExecuteGraphSearch;
@@ -297,7 +360,7 @@ public class MainView : Toplevel
         _btnGraphQuery = new Button
         {
             Text = ">>> Query <<<",
-            X = 48, Y = 7,
+            X = 48, Y = 10,
             Visible = false
         };
         _btnGraphQuery.Accepting += OnExecuteGraphQuery;
@@ -347,8 +410,9 @@ public class MainView : Toplevel
         _btnUpdatePath.Accepting += OnUpdatePath;
 
         Add(_titleLabel, _pathLabel, _hintLabel, _btnBack, _listView, _resultView,
-            _chkTree, _chkDetail, _chkStats, _lblInclude, _txtInclude, _btnExecute,
-            _lblSearch, _txtSearch, _btnSearch, _btnGraphSearch, _btnGraphQuery,
+            _chkTree, _chkDetail, _chkStats, _chkFull,
+            _lblInclude, _txtInclude, _lblExclude, _txtExclude, _lblDepth, _txtDepth, _btnExecute,
+            _lblSearch, _txtSearch, _lblType, _txtType, _btnSearch, _btnGraphSearch, _btnGraphQuery,
             _lblAddInfo, _txtAddInfo, _btnAddInfo,
             _lblUpdatePath, _txtUpdatePath, _btnUpdatePath);
 
@@ -385,7 +449,9 @@ public class MainView : Toplevel
         }
 
         // ignore when typing in text field
-        if (_txtInclude.HasFocus || _txtSearch.HasFocus || _txtAddInfo.HasFocus || _txtUpdatePath.HasFocus) return;
+        if (_txtInclude.HasFocus || _txtExclude.HasFocus || _txtDepth.HasFocus ||
+            _txtSearch.HasFocus || _txtType.HasFocus ||
+            _txtAddInfo.HasFocus || _txtUpdatePath.HasFocus) return;
 
         if (IsQKey(key))
         {
@@ -431,6 +497,11 @@ public class MainView : Toplevel
                 if (_resultsFromSourceUpdate)
                 {
                     _resultsFromSourceUpdate = false;
+                    ShowProjectDetail(_currentProjectId);
+                }
+                else if (_resultsFromDocOrphan)
+                {
+                    _resultsFromDocOrphan = false;
                     ShowProjectDetail(_currentProjectId);
                 }
                 else
@@ -511,6 +582,7 @@ public class MainView : Toplevel
             if (selected is "__PROJECTS__") { ShowProjects(); return; }
             if (selected is "__ADDINFO__") { ShowAddInfoInput(); return; }
             if (selected is "__UPDATEPATH__") { ShowUpdatePathInput(); return; }
+            if (selected is "__DOCORPHAN__") { ShowDocOrphans(_currentProjectId); return; }
             if (selected is "__UPDATESOURCE__") { ExecuteSourceUpdate(); return; }
             if (selected is "__DELETE__") { ConfirmDeleteProject(); return; }
             if (selected is "__HOME__") { ShowRootSelect(); return; }
@@ -530,7 +602,10 @@ public class MainView : Toplevel
         _optTree = _chkTree.CheckedState == CheckState.Checked;
         _optDetail = _chkDetail.CheckedState == CheckState.Checked;
         _optStats = _chkStats.CheckedState == CheckState.Checked;
+        _optFull = _chkFull.CheckedState == CheckState.Checked;
         _optInclude = _txtInclude.Text?.ToString()?.Trim() ?? "";
+        _optExclude = _txtExclude.Text?.ToString()?.Trim() ?? "";
+        _optDepth = _txtDepth.Text?.ToString()?.Trim() ?? "";
 
         _scanning = true;
         _mode = Mode.Scanning;
@@ -544,13 +619,16 @@ public class MainView : Toplevel
         var optTree = _optTree;
         var optDetail = _optDetail;
         var optStats = _optStats;
+        var optFull = _optFull;
         var optInclude = _optInclude;
+        var optExclude = _optExclude;
+        var optDepth = _optDepth;
 
         Task.Run(() =>
         {
             try
             {
-                ExecuteScanAsync(path, optTree, optDetail, optStats, optInclude);
+                ExecuteScanAsync(path, optTree, optDetail, optStats, optFull, optInclude, optExclude, optDepth);
             }
             catch (Exception ex)
             {
@@ -587,7 +665,8 @@ public class MainView : Toplevel
         });
     }
 
-    private void ExecuteScanAsync(string path, bool optTree, bool optDetail, bool optStats, string optInclude)
+    private void ExecuteScanAsync(string path, bool optTree, bool optDetail, bool optStats,
+        bool optFull, string optInclude, string optExclude, string optDepth)
     {
         List<string>? include = null;
         if (!string.IsNullOrWhiteSpace(optInclude))
@@ -596,11 +675,25 @@ public class MainView : Toplevel
                 .Select(s => s.Trim()).ToList();
         }
 
+        List<string>? exclude = null;
+        if (!string.IsNullOrWhiteSpace(optExclude))
+        {
+            exclude = optExclude.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Select(s => s.Trim()).ToList();
+        }
+
+        int maxDepth = int.MaxValue;
+        if (!string.IsNullOrWhiteSpace(optDepth) && int.TryParse(optDepth, out var parsedDepth) && parsedDepth > 0)
+            maxDepth = parsedDepth;
+
         AppendResult("[1/3] Scanning directory...\n");
+        if (optFull) AppendResult("  (graph mode: --full rebuild — auto rows not seen this scan are dropped)\n");
 
         var scanner = new DirectoryScanner(
             includeExts: include,
-            respectGitignore: true);
+            excludeDirs: exclude,
+            respectGitignore: true,
+            maxDepth: maxDepth);
 
         var entries = scanner.Scan(path);
         var fileCount = entries.Count(e => !e.IsDirectory);
@@ -667,7 +760,7 @@ public class MainView : Toplevel
         {
             using var db = new SqliteStore(AppPaths.DbPath);
             var projectId = db.UpsertProject(Path.GetFullPath(path));
-            var scanId = db.InsertScan(projectId, entries);
+            var scanId = db.InsertScan(projectId, entries, optFull);
 
             var docPath = ProjectDocFinder.FindDoc(path);
             if (docPath != null)
@@ -734,11 +827,14 @@ public class MainView : Toplevel
 
         _lblSearch.Visible = true;
         _txtSearch.Visible = true;
+        _lblType.Visible = true;
+        _txtType.Visible = true;
         _btnSearch.Visible = true;
         _btnGraphSearch.Visible = true;
         _btnGraphQuery.Visible = true;
 
         _txtSearch.Text = " ";
+        _txtType.Text = " ";
         _txtSearch.SetFocus();
     }
 
@@ -746,6 +842,9 @@ public class MainView : Toplevel
     {
         var query = _txtSearch.Text?.ToString()?.Trim() ?? "";
         if (string.IsNullOrEmpty(query)) return;
+
+        var typeFilter = _txtType.Text?.ToString()?.Trim() ?? "";
+        if (typeFilter.Length == 0) typeFilter = null!;
 
         _lblSearch.Visible = false;
         _txtSearch.Visible = false;
@@ -763,12 +862,17 @@ public class MainView : Toplevel
             }
 
             using var db = new SqliteStore(dbPath);
-            var dbResults = db.Search(query, null, 50);
-            var gitResults = GitLogSearchService.Search(query, 10);
+            var dbResults = db.Search(query, typeFilter, 50);
+            // Git-log hits are commit-typed; only fold them in when the type
+            // filter is off or explicitly asking for commits (matches CLI).
+            var gitResults = (typeFilter is null || typeFilter == "commit")
+                ? GitLogSearchService.Search(query, 10)
+                : new List<SearchResult>();
 
             if (dbResults.Count == 0 && gitResults.Count == 0)
             {
-                ShowSearchResults($"No results for: {query}", query);
+                var suffix = typeFilter is null ? "" : $" (type={typeFilter})";
+                ShowSearchResults($"No results for: {query}{suffix}", query);
                 return;
             }
 
@@ -1111,6 +1215,8 @@ public class MainView : Toplevel
 
             _listItems.Add("  ----------------");
             _dirEntries.Add("__SEP__");
+            _listItems.Add("  [Doc Orphans] - Docs with no code link + relink candidates");
+            _dirEntries.Add("__DOCORPHAN__");
             _listItems.Add("  [Update Source] - Git pull + full rescan");
             _dirEntries.Add("__UPDATESOURCE__");
             _listItems.Add("  [Update Path] - Change project root path");
@@ -1336,6 +1442,86 @@ public class MainView : Toplevel
         }
     }
 
+    // ========================
+    // Doc Orphans (docs with no code link)
+    // ========================
+    private void ShowDocOrphans(long projectId)
+    {
+        _mode = Mode.Results;
+        _resultsFromDocOrphan = true;
+        _titleLabel.Text = $"Doc Orphans - Project #{projectId}";
+        _pathLabel.Text = "Markdown docs the graph can't link to any code";
+        _hintLabel.Text = "[Q] Back to project  [H] Home  [Up/Down] Scroll";
+
+        _listView.Visible = false;
+        HideOptions();
+
+        var sb = new System.Text.StringBuilder();
+        try
+        {
+            using var db = new SqliteStore(AppPaths.DbPath);
+            var result = new DocOrphanCommand(db).Analyze(projectId);
+            if (result.ProjectMissing)
+                sb.AppendLine("No project data found. Run a scan first.");
+            else
+                RenderDocOrphans(sb, result);
+        }
+        catch (Exception ex)
+        {
+            sb.AppendLine($"Doc-orphan scan error: {ex.Message}");
+        }
+
+        _resultView.Text = sb.ToString();
+        _resultView.Visible = true;
+        _resultView.MoveHome();
+        _resultView.SetFocus();
+    }
+
+    // Mirrors the CLI `doc-orphan` output (ASCII glyphs for terminal safety).
+    // Unlike the CLI, the human viewer always lists declared + intentional too.
+    private static void RenderDocOrphans(System.Text.StringBuilder sb, DocOrphanResult r)
+    {
+        sb.AppendLine($"=== Orphan doc scan - project #{r.ProjectId} ({r.TotalUnlinked} md files with no code link) ===");
+        sb.AppendLine();
+
+        sb.AppendLine($"NEGLECTED orphans ({r.Neglected.Count}) - no mentions, no governs, no anchor:none:");
+        if (r.Neglected.Count == 0) sb.AppendLine("  (none)");
+        foreach (var o in r.Neglected)
+        {
+            sb.AppendLine($"  x {o.Path}");
+            if (o.Candidates.Count > 0)
+            {
+                sb.AppendLine($"      candidate classes in body -> {string.Join(", ", o.Candidates)}");
+                var governs = "governs: [" + string.Join(", ", o.Candidates.Select(c => $"\"{c}\"")) + "]";
+                sb.AppendLine(o.HasFrontmatter
+                    ? $"      FIX (add to existing frontmatter):  {governs}"
+                    : $"      FIX (prepend frontmatter):  ---  {governs}  anchor: auto  ---");
+            }
+            else
+            {
+                sb.AppendLine("      no code-class names in body (pure prose)");
+                sb.AppendLine(o.HasFrontmatter
+                    ? "      FIX (add to existing frontmatter):  anchor: none"
+                    : "      FIX (prepend frontmatter):  ---  anchor: none  ---");
+            }
+        }
+
+        sb.AppendLine();
+        sb.AppendLine($"DECLARED anchors ({r.Declared.Count}) - frontmatter governs: set:");
+        if (r.Declared.Count == 0) sb.AppendLine("  (none)");
+        foreach (var p in r.Declared) sb.AppendLine($"  - {p}");
+
+        sb.AppendLine();
+        sb.AppendLine($"INTENTIONAL orphans ({r.Intentional.Count}) - frontmatter anchor: none:");
+        if (r.Intentional.Count == 0) sb.AppendLine("  (none)");
+        foreach (var p in r.Intentional) sb.AppendLine($"  . {p}");
+
+        sb.AppendLine();
+        sb.AppendLine("Re-connect an orphan by editing the MD frontmatter (source of truth):");
+        sb.AppendLine("CodeScan parses governs:/anchor: back into the graph on the next scan.");
+        sb.AppendLine("See harness/knowledge/doc-code-linkage.md");
+    }
+
     private void ShowRootSelect()
     {
         _mode = Mode.RootSelect;
@@ -1453,8 +1639,13 @@ public class MainView : Toplevel
         _chkTree.Visible = true;
         _chkDetail.Visible = true;
         _chkStats.Visible = true;
+        _chkFull.Visible = true;
         _lblInclude.Visible = true;
         _txtInclude.Visible = true;
+        _lblExclude.Visible = true;
+        _txtExclude.Visible = true;
+        _lblDepth.Visible = true;
+        _txtDepth.Visible = true;
         _btnExecute.Visible = true;
 
         _chkTree.SetFocus();
@@ -1472,11 +1663,18 @@ public class MainView : Toplevel
         _chkTree.Visible = false;
         _chkDetail.Visible = false;
         _chkStats.Visible = false;
+        _chkFull.Visible = false;
         _lblInclude.Visible = false;
         _txtInclude.Visible = false;
+        _lblExclude.Visible = false;
+        _txtExclude.Visible = false;
+        _lblDepth.Visible = false;
+        _txtDepth.Visible = false;
         _btnExecute.Visible = false;
         _lblSearch.Visible = false;
         _txtSearch.Visible = false;
+        _lblType.Visible = false;
+        _txtType.Visible = false;
         _btnSearch.Visible = false;
         _btnGraphSearch.Visible = false;
         _btnGraphQuery.Visible = false;
