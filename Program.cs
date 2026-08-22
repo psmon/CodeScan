@@ -64,6 +64,7 @@ class Program
             "semantic" => RunSemantic(commandArgs),
             "graph-edit" => RunGraphEdit(commandArgs),
             "doc-orphan" or "orphans" => RunDocOrphan(commandArgs),
+            "arch" => RunArch(commandArgs),
             "help" => RunHelp(commandArgs),
             _ => UnknownCommand(command)
         };
@@ -81,6 +82,12 @@ class Program
     {
         using var db = OpenDb();
         return new DocOrphanCommand(db).Execute(args);
+    }
+
+    static int RunArch(string[] args)
+    {
+        using var db = OpenDb();
+        return new ArchCommand(db).Execute(args);
     }
 
     static int RunScan(string[] args, GlobalOptions global)
@@ -528,6 +535,7 @@ class Program
             case "project-delete": PrintProjectDeleteHelp(); break;
             case "tui": Console.WriteLine("  codescan tui - Interactive TUI mode."); break;
             case "doc-orphan": case "orphans": DocOrphanCommand.PrintHelp(); break;
+            case "arch": ArchCommand.PrintHelp(); break;
             default:
                 Console.WriteLine($"Unknown command: {args[0]}");
                 PrintHelp();
@@ -599,6 +607,7 @@ class Program
           semantic <sub>               Compiler-backed analysis via docker (Phase 1 PoC)
           graph-edit <sub>             Manually curate graph nodes/edges (LLM-friendly)
           doc-orphan                   Find docs with no code linkage (orphans) + relink candidates
+          arch <sub>                   Architecture analysis: bundle | set | show | status (AI-outside)
           help [command]               Show help
 
         Global Options:

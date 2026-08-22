@@ -42,6 +42,14 @@
         <PackageReference Include="Terminal.Gui" Version="2.0.0-beta.*" />
     </ItemGroup>
 
+    <!-- Mermaid bundle for the web Architecture View. Served self-hosted by
+         GuiCommand at /assets/mermaid.js so the viewer needs no CDN (offline-safe). -->
+    <ItemGroup>
+        <EmbeddedResource Include="Assets\mermaid.min.js">
+            <LogicalName>CodeScan.Assets.mermaid.min.js</LogicalName>
+        </EmbeddedResource>
+    </ItemGroup>
+
     <!-- ============================================================
          Auto Version Bump: 빌드마다 마이너(끝자리) +1
          마이너 >= 100 → 마이너 리셋, 중간 버전 +1

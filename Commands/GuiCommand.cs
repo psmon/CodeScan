@@ -165,6 +165,9 @@ public static class GuiCommand
         if (path == "/favicon.ico")
             return new ResponsePayload(204, "No Content", "image/x-icon", "");
 
+        if (path == "/assets/mermaid.js")
+            return new ResponsePayload(200, "OK", "application/javascript; charset=utf-8", MermaidJs);
+
         if (path == "/api/search")
         {
             var query = queryString.GetValueOrDefault("q") ?? "";
@@ -205,8 +208,31 @@ public static class GuiCommand
 
         if (path == "/api/projects")
         {
+            var analyzedOnly = queryString.GetValueOrDefault("analyzed") == "1";
             using var db = new SqliteStore(AppPaths.DbPath);
-            return JsonResponse(new ProjectsApiResponse { Projects = db.GetProjects() });
+            var projects = analyzedOnly ? db.GetAnalyzedProjects() : db.GetProjects();
+            return JsonResponse(new ProjectsApiResponse { Projects = projects });
+        }
+
+        if (path == "/api/architecture")
+        {
+            var projectId = ParseLong(queryString.GetValueOrDefault("project"));
+            if (projectId is null)
+                return new ResponsePayload(400, "Bad Request", "text/plain; charset=utf-8", "project is required.");
+            using var db = new SqliteStore(AppPaths.DbPath);
+            var arch = db.GetArchitecture(projectId.Value);
+            if (arch is null)
+                return new ResponsePayload(404, "Not Found", "text/plain; charset=utf-8", "no architecture analysis for this project.");
+            return JsonResponse(new ArchitectureApiResponse
+            {
+                ProjectId = arch.ProjectId,
+                Format = arch.Format,
+                Diagram = arch.Diagram,
+                Summary = arch.Summary,
+                Layers = arch.Layers,
+                AnalyzedAt = arch.AnalyzedAt,
+                State = arch.State
+            });
         }
 
         if (path == "/api/file")
@@ -370,13 +396,45 @@ public static class GuiCommand
         public bool Truncated { get; init; }
     }
 
+    internal sealed class ArchitectureApiResponse
+    {
+        public long ProjectId { get; init; }
+        public string Format { get; init; } = "mermaid";
+        public string Diagram { get; init; } = "";
+        public string? Summary { get; init; }
+        public string? Layers { get; init; }
+        public string AnalyzedAt { get; init; } = "";
+        public string? State { get; init; }
+    }
+
+    // Mermaid bundle, read once from the embedded resource (see CodeScan.csproj).
+    // Served at /assets/mermaid.js so the Architecture View renders without a CDN.
+    private static string? _mermaidJs;
+    private static string MermaidJs
+    {
+        get
+        {
+            if (_mermaidJs is not null) return _mermaidJs;
+            var asm = typeof(GuiCommand).Assembly;
+            using var stream = asm.GetManifestResourceStream("CodeScan.Assets.mermaid.min.js");
+            if (stream is null)
+            {
+                _mermaidJs = "/* mermaid bundle missing */";
+                return _mermaidJs;
+            }
+            using var reader = new StreamReader(stream, Encoding.UTF8);
+            _mermaidJs = reader.ReadToEnd();
+            return _mermaidJs;
+        }
+    }
+
     private const string Html = """
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>CodeScan Graph</title>
+  <title>CodeScan View</title>
   <style>
     :root {
       color-scheme: light;
@@ -401,8 +459,18 @@ public static class GuiCommand
     .ver { font:600 11px ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--muted); background:var(--chip); padding:3px 8px; border-radius:999px; }
     .status-pill { margin-left:auto; display:flex; align-items:center; gap:7px; padding:5px 12px; border-radius:999px; background:var(--accent-soft); color:var(--accent-strong); font-size:12px; font-weight:600; }
     .status-pill .live { width:7px; height:7px; border-radius:50%; background:var(--good); flex:0 0 auto; }
+    /* Shell = LNB rail + view container */
+    .shell { display:flex; height:calc(100vh - 60px); min-height:620px; }
+    .lnb { width:64px; flex:0 0 64px; background:var(--surface); border-right:1px solid var(--line); display:flex; flex-direction:column; align-items:stretch; padding:10px 0; gap:4px; }
+    .lnb button { display:flex; flex-direction:column; align-items:center; gap:5px; padding:11px 4px; margin:0 8px; border:0; background:transparent; color:var(--muted); border-radius:10px; cursor:pointer; font-size:10px; font-weight:600; letter-spacing:.02em; transition:background .15s,color .15s; }
+    .lnb button svg { width:22px; height:22px; }
+    .lnb button:hover { background:var(--chip); color:var(--ink-2); }
+    .lnb button.active { background:var(--accent-soft); color:var(--accent-strong); }
+    .views { flex:1; min-width:0; }
+    .view { height:100%; }
+    .view[hidden] { display:none !important; }
     /* Layout */
-    main { display:grid; grid-template-columns:340px minmax(420px,1fr) 340px; height:calc(100vh - 60px); min-height:620px; }
+    main#viewGraph { display:grid; grid-template-columns:340px minmax(420px,1fr) 340px; height:100%; }
     aside, .detail { background:var(--surface); overflow:auto; }
     aside { border-right:1px solid var(--line); padding:16px; display:flex; flex-direction:column; gap:14px; }
     .detail { border-left:1px solid var(--line); display:flex; flex-direction:column; }
@@ -486,7 +554,24 @@ public static class GuiCommand
     #graphCanvas.dragging { cursor:grabbing; }
     *:focus-visible { outline:2px solid var(--focus); outline-offset:2px; }
     @media (prefers-reduced-motion: reduce) { * { transition:none !important; animation:none !important; } }
-    @media (max-width: 980px) { main { grid-template-columns:1fr; grid-template-rows:auto 70vh auto; height:auto; } aside, .detail { border:0; border-bottom:1px solid var(--line); } }
+    @media (max-width: 980px) { main#viewGraph { grid-template-columns:1fr; grid-template-rows:auto 70vh auto; height:auto; } aside, .detail { border:0; border-bottom:1px solid var(--line); } .arch-main { grid-template-columns:1fr !important; grid-template-rows:auto 60vh 40vh !important; } }
+    /* Architecture View */
+    .arch-main { display:grid; grid-template-columns:340px minmax(420px,1fr); grid-template-rows:auto 1fr; height:100%; }
+    .arch-side { grid-row:1 / span 2; background:var(--surface); border-right:1px solid var(--line); padding:16px; overflow:auto; display:flex; flex-direction:column; gap:14px; }
+    .arch-topbar { grid-column:2; display:flex; align-items:center; gap:12px; padding:12px 18px; background:var(--surface); border-bottom:1px solid var(--line); }
+    .arch-stage { grid-column:2; position:relative; overflow:auto; background:var(--stage); display:flex; align-items:center; justify-content:center; padding:24px; }
+    .arch-stage svg { max-width:100%; height:auto; }
+    .arch-empty { max-width:460px; text-align:center; color:var(--muted); font-size:14px; line-height:1.6; }
+    .arch-empty code { background:var(--chip); border-radius:6px; padding:2px 6px; font:12px ui-monospace,monospace; color:var(--accent-strong); }
+    .state-badge { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; font-size:11px; font-weight:700; letter-spacing:.03em; }
+    .state-badge.analyzed { background:#e6f7ec; color:var(--good); }
+    .state-badge.stale { background:#fff4e0; color:var(--warn); }
+    .arch-summary { font-size:13px; line-height:1.6; color:var(--ink-2); }
+    .arch-summary h2 { font-size:14px; color:var(--ink); margin:14px 0 6px; }
+    .arch-summary h3 { font-size:12.5px; color:var(--ink); margin:12px 0 4px; }
+    .arch-summary code { background:var(--chip); border-radius:5px; padding:1px 5px; font:11.5px ui-monospace,monospace; }
+    .arch-summary ul { margin:6px 0; padding-left:18px; }
+    .arch-summary p { margin:6px 0; }
     /* File preview button + MS-style code viewer modal */
     .viewfile-btn { margin:10px 0 4px; width:100%; height:36px; display:flex; align-items:center; justify-content:center; gap:7px; border:1px solid var(--accent); background:var(--accent-soft); color:var(--accent-strong); border-radius:8px; font-weight:600; font-size:13px; cursor:pointer; transition:background .15s,color .15s; }
     .viewfile-btn:hover { background:var(--accent); color:#fff; }
@@ -511,12 +596,24 @@ public static class GuiCommand
   <header>
     <div class="brand">
       <span class="brand-mark"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v1a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V9"/><path d="M12 12v3"/></svg></span>
-      <h1>CodeScan Graph</h1>
-      <span class="ver">v0.11</span>
+      <h1>CodeScan View</h1>
+      <span class="ver">v0.12</span>
     </div>
     <div class="status-pill"><span class="live"></span><span id="stats">Ready</span></div>
   </header>
-  <main>
+  <div class="shell">
+    <nav class="lnb">
+      <button id="navGraph" data-view="graph" class="active" title="Graph View">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v1a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V9"/><path d="M12 12v3"/></svg>
+        <span>Graph</span>
+      </button>
+      <button id="navArch" data-view="arch" title="Architecture View">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="8" y="14" width="8" height="7" rx="1"/><path d="M6.5 10v2a2 2 0 0 0 2 2h1"/><path d="M17.5 10v2a2 2 0 0 1-2 2h-1"/></svg>
+        <span>Arch</span>
+      </button>
+    </nav>
+    <div class="views">
+    <main id="viewGraph" class="view">
     <aside>
       <div class="field">
         <div class="search-wrap">
@@ -599,7 +696,29 @@ public static class GuiCommand
       </div>
       <div class="panel-body" id="detailBody"></div>
     </section>
-  </main>
+    </main>
+    <section id="viewArch" class="view arch-view" hidden>
+      <div class="arch-main">
+        <div class="arch-side">
+          <div class="field">
+            <label class="micro" for="archProject">Analyzed Project</label>
+            <select id="archProject"><option value="">Loading…</option></select>
+          </div>
+          <div id="archMeta" class="hint-sm"></div>
+          <div id="archSummary" class="arch-summary"></div>
+        </div>
+        <div class="arch-topbar">
+          <span class="micro" style="margin:0">Architecture Diagram</span>
+          <span id="archState"></span>
+          <span class="hint-sm" id="archAt" style="margin-left:auto"></span>
+        </div>
+        <div class="arch-stage" id="archStage">
+          <div class="arch-empty">Select an analyzed project to view its architecture.</div>
+        </div>
+      </div>
+    </section>
+    </div>
+  </div>
   <div id="fileModal" class="modal" hidden>
     <div class="modal-card">
       <div class="modal-head">
@@ -611,6 +730,7 @@ public static class GuiCommand
       <div class="code-view" id="fileBody"></div>
     </div>
   </div>
+  <script src="/assets/mermaid.js"></script>
   <script>
     const $ = id => document.getElementById(id);
     const canvas = $("graphCanvas"), ctx = canvas.getContext("2d");
@@ -860,6 +980,79 @@ public static class GuiCommand
     $("fileModal").addEventListener("click", e=>{ if(e.target.id==="fileModal") closeFile(); });
     addEventListener("keydown", e=>{ if(e.key==="Escape" && !$("fileModal").hidden) closeFile(); });
 
+    // ---- LNB view switching (Graph View <-> Architecture View) ----
+    let archLoaded = false, mermaidReady = false, archRenderSeq = 0;
+    function switchView(name){
+      document.querySelectorAll(".lnb button").forEach(b=>b.classList.toggle("active", b.dataset.view===name));
+      $("viewGraph").hidden = name!=="graph";
+      $("viewArch").hidden = name!=="arch";
+      if(name==="graph"){ fitCanvas(); fitView(); draw(); }
+      else if(name==="arch" && !archLoaded){ archLoaded=true; loadArchProjects(); }
+    }
+    document.querySelectorAll(".lnb button").forEach(b=>b.onclick=()=>switchView(b.dataset.view));
+
+    async function loadArchProjects(){
+      const sel=$("archProject"); sel.innerHTML="";
+      try{
+        const data=await api("/api/projects?analyzed=1");
+        if(!data.projects.length){
+          sel.innerHTML=`<option value="">No analyzed projects</option>`;
+          $("archStage").innerHTML=`<div class="arch-empty">No project has an architecture analysis yet.<br><br>Generate one from the CLI:<br><code>codescan arch bundle &lt;id&gt;</code> &rarr; (AI writes a Mermaid diagram) &rarr; <code>codescan arch set &lt;id&gt; --diagram diagram.mmd --summary summary.md</code></div>`;
+          $("archSummary").innerHTML=""; $("archState").innerHTML=""; $("archAt").textContent=""; $("archMeta").textContent="";
+          return;
+        }
+        for(const p of data.projects){ const o=document.createElement("option"); o.value=p.id; o.textContent=`#${p.id} ${p.rootPath}`; sel.appendChild(o); }
+        sel.onchange=()=>loadArchitecture(sel.value);
+        loadArchitecture(sel.value);
+      }catch(e){ $("archStage").innerHTML=`<div class="arch-empty">${escapeHtml(e.message)}</div>`; }
+    }
+
+    function ensureMermaid(){ if(mermaidReady) return true; if(typeof mermaid==="undefined") return false; mermaid.initialize({startOnLoad:false, theme:"default", securityLevel:"loose", flowchart:{htmlLabels:true, curve:"basis"}}); mermaidReady=true; return true; }
+
+    async function loadArchitecture(projectId){
+      if(!projectId) return;
+      const stage=$("archStage"); stage.innerHTML=`<div class="arch-empty">Loading…</div>`;
+      try{
+        const a=await api(`/api/architecture?project=${projectId}`);
+        // Meta / state
+        const st=(a.state||"analyzed").toLowerCase();
+        $("archState").innerHTML = st==="stale"
+          ? `<span class="state-badge stale">STALE · rescanned</span>`
+          : `<span class="state-badge analyzed">ANALYZED</span>`;
+        $("archAt").textContent = a.analyzedAt ? `analyzed ${a.analyzedAt}` : "";
+        $("archMeta").innerHTML = st==="stale" ? "Project was rescanned after this analysis — regenerate with <code>codescan arch bundle/set</code> for an up-to-date diagram." : "";
+        $("archSummary").innerHTML = a.summary ? mdLite(a.summary) : "";
+        // Diagram
+        if((a.format||"mermaid")!=="mermaid"){ stage.innerHTML=`<pre style="white-space:pre-wrap">${escapeHtml(a.diagram)}</pre>`; return; }
+        if(!ensureMermaid()){ stage.innerHTML=`<div class="arch-empty">Mermaid renderer not available.</div>`; return; }
+        const id="archDiagram"+(++archRenderSeq);
+        try{
+          const {svg}=await mermaid.render(id, a.diagram);
+          stage.innerHTML=svg;
+        }catch(err){
+          stage.innerHTML=`<div class="arch-empty">Diagram failed to render.<br><br><pre style="text-align:left;white-space:pre-wrap;font:11px ui-monospace,monospace">${escapeHtml(String(err&&err.message||err))}</pre><br>Raw source:<br><pre style="text-align:left;white-space:pre-wrap;font:11px ui-monospace,monospace">${escapeHtml(a.diagram)}</pre></div>`;
+        }
+      }catch(e){ stage.innerHTML=`<div class="arch-empty">${escapeHtml(e.message)}</div>`; }
+    }
+
+    // Minimal, safe markdown → HTML for the layer summary (escaped first).
+    function mdLite(md){
+      const lines=String(md).split(/\r?\n/); let html="", inList=false;
+      const inline=s=>escapeHtml(s).replace(/`([^`]+)`/g,'<code>$1</code>').replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>');
+      for(const raw of lines){
+        const line=raw.replace(/\s+$/,"");
+        if(/^\s*[-*]\s+/.test(line)){ if(!inList){ html+="<ul>"; inList=true; } html+=`<li>${inline(line.replace(/^\s*[-*]\s+/,""))}</li>`; continue; }
+        if(inList){ html+="</ul>"; inList=false; }
+        if(/^###\s+/.test(line)){ html+=`<h3>${inline(line.replace(/^###\s+/,""))}</h3>`; }
+        else if(/^##\s+/.test(line)){ html+=`<h2>${inline(line.replace(/^##\s+/,""))}</h2>`; }
+        else if(/^#\s+/.test(line)){ html+=`<h2>${inline(line.replace(/^#\s+/,""))}</h2>`; }
+        else if(line.trim()===""){ /* skip */ }
+        else { html+=`<p>${inline(line)}</p>`; }
+      }
+      if(inList) html+="</ul>";
+      return html;
+    }
+
     loadProjects().then(()=>$("graph").click()).catch(e=>$("stats").textContent=e.message);
   </script>
 </body>
@@ -871,6 +1064,7 @@ public static class GuiCommand
 [JsonSerializable(typeof(GuiCommand.SearchApiResponse))]
 [JsonSerializable(typeof(GuiCommand.ProjectsApiResponse))]
 [JsonSerializable(typeof(GuiCommand.FileApiResponse))]
+[JsonSerializable(typeof(GuiCommand.ArchitectureApiResponse))]
 [JsonSerializable(typeof(GraphData))]
 [JsonSerializable(typeof(GraphNode))]
 [JsonSerializable(typeof(GraphEdge))]

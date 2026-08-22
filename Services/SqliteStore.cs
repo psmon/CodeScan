@@ -88,6 +88,18 @@ public sealed class SqliteStore : IResultStore, IDisposable
                 end_line INTEGER
             );
 
+            CREATE TABLE IF NOT EXISTS architecture_analysis (
+                id INTEGER PRIMARY KEY,
+                project_id INTEGER NOT NULL REFERENCES projects(id),
+                format TEXT NOT NULL DEFAULT 'mermaid',
+                diagram TEXT NOT NULL,
+                summary TEXT,
+                layers TEXT,
+                analyzed_at TEXT NOT NULL,
+                source_scan INTEGER,
+                UNIQUE(project_id)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_files_scan ON files(scan_id);
             CREATE INDEX IF NOT EXISTS idx_comments_file ON comments(file_id);
             CREATE INDEX IF NOT EXISTS idx_methods_file ON methods(file_id);
@@ -101,6 +113,16 @@ public sealed class SqliteStore : IResultStore, IDisposable
         try
         {
             cmd.CommandText = "ALTER TABLE projects ADD COLUMN addinfo TEXT";
+            cmd.ExecuteNonQuery();
+        }
+        catch { /* column already exists */ }
+
+        // Migration: add analysis_state column (architecture-analysis lifecycle).
+        // null/'none' = not analyzed, 'analyzed' = has an architecture diagram,
+        // 'stale' = analyzed then rescanned (code changed → re-analysis advised).
+        try
+        {
+            cmd.CommandText = "ALTER TABLE projects ADD COLUMN analysis_state TEXT";
             cmd.ExecuteNonQuery();
         }
         catch { /* column already exists */ }
@@ -248,7 +270,7 @@ public sealed class SqliteStore : IResultStore, IDisposable
     {
         var list = new List<ProjectInfo>();
         using var cmd = _conn.CreateCommand();
-        cmd.CommandText = "SELECT id, root_path, last_scanned_at, file_count, dir_count, total_size, addinfo FROM projects ORDER BY last_scanned_at DESC";
+        cmd.CommandText = "SELECT id, root_path, last_scanned_at, file_count, dir_count, total_size, addinfo, analysis_state FROM projects ORDER BY last_scanned_at DESC";
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
         {
@@ -260,7 +282,33 @@ public sealed class SqliteStore : IResultStore, IDisposable
                 FileCount = reader.IsDBNull(3) ? 0 : reader.GetInt32(3),
                 DirCount = reader.IsDBNull(4) ? 0 : reader.GetInt32(4),
                 TotalSize = reader.IsDBNull(5) ? 0 : reader.GetInt64(5),
-                AddInfo = reader.IsDBNull(6) ? null : reader.GetString(6)
+                AddInfo = reader.IsDBNull(6) ? null : reader.GetString(6),
+                AnalysisState = reader.IsDBNull(7) ? null : reader.GetString(7)
+            });
+        }
+        return list;
+    }
+
+    /// <summary>Projects that have a completed architecture analysis (state = 'analyzed' or 'stale').
+    /// Feeds the web Architecture View selector, which only lists analyzed projects.</summary>
+    public List<ProjectInfo> GetAnalyzedProjects()
+    {
+        var list = new List<ProjectInfo>();
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = "SELECT id, root_path, last_scanned_at, file_count, dir_count, total_size, addinfo, analysis_state FROM projects WHERE analysis_state IN ('analyzed','stale') ORDER BY last_scanned_at DESC";
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            list.Add(new ProjectInfo
+            {
+                Id = reader.GetInt64(0),
+                RootPath = reader.GetString(1),
+                LastScannedAt = reader.IsDBNull(2) ? null : reader.GetString(2),
+                FileCount = reader.IsDBNull(3) ? 0 : reader.GetInt32(3),
+                DirCount = reader.IsDBNull(4) ? 0 : reader.GetInt32(4),
+                TotalSize = reader.IsDBNull(5) ? 0 : reader.GetInt64(5),
+                AddInfo = reader.IsDBNull(6) ? null : reader.GetString(6),
+                AnalysisState = reader.IsDBNull(7) ? null : reader.GetString(7)
             });
         }
         return list;
@@ -269,7 +317,7 @@ public sealed class SqliteStore : IResultStore, IDisposable
     public ProjectInfo? GetProject(long projectId)
     {
         using var cmd = _conn.CreateCommand();
-        cmd.CommandText = "SELECT id, root_path, last_scanned_at, file_count, dir_count, total_size, addinfo FROM projects WHERE id = @id";
+        cmd.CommandText = "SELECT id, root_path, last_scanned_at, file_count, dir_count, total_size, addinfo, analysis_state FROM projects WHERE id = @id";
         cmd.Parameters.AddWithValue("@id", projectId);
         using var reader = cmd.ExecuteReader();
         if (!reader.Read()) return null;
@@ -282,7 +330,8 @@ public sealed class SqliteStore : IResultStore, IDisposable
             FileCount = reader.IsDBNull(3) ? 0 : reader.GetInt32(3),
             DirCount = reader.IsDBNull(4) ? 0 : reader.GetInt32(4),
             TotalSize = reader.IsDBNull(5) ? 0 : reader.GetInt64(5),
-            AddInfo = reader.IsDBNull(6) ? null : reader.GetString(6)
+            AddInfo = reader.IsDBNull(6) ? null : reader.GetString(6),
+            AnalysisState = reader.IsDBNull(7) ? null : reader.GetString(7)
         };
     }
 
@@ -304,6 +353,76 @@ public sealed class SqliteStore : IResultStore, IDisposable
         cmd.ExecuteNonQuery();
     }
 
+    // ========================
+    // Architecture analysis (AI-outside): the CLI emits a graph/code bundle,
+    // an external AI produces a Mermaid diagram + narrative, and `arch set`
+    // persists it here. One row per project (upsert), marking the project
+    // 'analyzed'. See Commands/ArchCommand.cs and Prompt/08-ARCH-ANALYSIS.md.
+    // ========================
+
+    /// <summary>Store (or replace) a project's architecture diagram and mark the project analyzed.</summary>
+    public void UpsertArchitecture(long projectId, string diagram, string? summary, string? layers, string format = "mermaid", long? sourceScan = null)
+    {
+        using var tx = _conn.BeginTransaction();
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO architecture_analysis(project_id, format, diagram, summary, layers, analyzed_at, source_scan)
+            VALUES(@pid, @fmt, @diag, @sum, @lay, @at, @scan)
+            ON CONFLICT(project_id) DO UPDATE SET
+                format = excluded.format,
+                diagram = excluded.diagram,
+                summary = excluded.summary,
+                layers = excluded.layers,
+                analyzed_at = excluded.analyzed_at,
+                source_scan = excluded.source_scan
+            """;
+        cmd.Parameters.AddWithValue("@pid", projectId);
+        cmd.Parameters.AddWithValue("@fmt", format);
+        cmd.Parameters.AddWithValue("@diag", diagram);
+        cmd.Parameters.AddWithValue("@sum", (object?)summary ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@lay", (object?)layers ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@at", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+        cmd.Parameters.AddWithValue("@scan", (object?)sourceScan ?? DBNull.Value);
+        cmd.ExecuteNonQuery();
+
+        cmd.CommandText = "UPDATE projects SET analysis_state = 'analyzed' WHERE id = @pid";
+        cmd.ExecuteNonQuery();
+
+        tx.Commit();
+    }
+
+    /// <summary>The stored architecture analysis for a project, or null if none.</summary>
+    public ArchitectureAnalysis? GetArchitecture(long projectId)
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = "SELECT project_id, format, diagram, summary, layers, analyzed_at, source_scan FROM architecture_analysis WHERE project_id = @pid";
+        cmd.Parameters.AddWithValue("@pid", projectId);
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read()) return null;
+
+        // The project's analysis_state carries the fresh/stale flag separately.
+        string? state = null;
+        using (var sc = _conn.CreateCommand())
+        {
+            sc.CommandText = "SELECT analysis_state FROM projects WHERE id = @pid";
+            sc.Parameters.AddWithValue("@pid", projectId);
+            var v = sc.ExecuteScalar();
+            state = v is string s ? s : null;
+        }
+
+        return new ArchitectureAnalysis
+        {
+            ProjectId = reader.GetInt64(0),
+            Format = reader.GetString(1),
+            Diagram = reader.GetString(2),
+            Summary = reader.IsDBNull(3) ? null : reader.GetString(3),
+            Layers = reader.IsDBNull(4) ? null : reader.GetString(4),
+            AnalyzedAt = reader.GetString(5),
+            SourceScan = reader.IsDBNull(6) ? null : reader.GetInt64(6),
+            State = state
+        };
+    }
+
     public bool DeleteProject(long projectId)
     {
         using var tx = _conn.BeginTransaction();
@@ -313,6 +432,9 @@ public sealed class SqliteStore : IResultStore, IDisposable
         cmd.CommandText = "DELETE FROM search_index WHERE scan_id IN (SELECT id FROM scans WHERE project_id = @pid)";
         cmd.Parameters.AddWithValue("@pid", projectId);
         try { cmd.ExecuteNonQuery(); } catch { /* FTS may not exist */ }
+
+        cmd.CommandText = "DELETE FROM architecture_analysis WHERE project_id = @pid";
+        cmd.ExecuteNonQuery();
 
         cmd.CommandText = "DELETE FROM graph_edges WHERE project_id = @pid";
         cmd.ExecuteNonQuery();
@@ -619,6 +741,16 @@ public sealed class SqliteStore : IResultStore, IDisposable
         scanCmd.Parameters.AddWithValue("@dc", dirCount);
         scanCmd.Parameters.AddWithValue("@ts", totalSize);
         scanCmd.ExecuteNonQuery();
+
+        // A new scan means the code changed since any prior architecture analysis,
+        // so downgrade an 'analyzed' project to 'stale' (re-analysis advised). The
+        // stored diagram is kept so the view still renders, flagged as stale.
+        using (var staleCmd = _conn.CreateCommand())
+        {
+            staleCmd.CommandText = "UPDATE projects SET analysis_state = 'stale' WHERE id = @pid AND analysis_state = 'analyzed'";
+            staleCmd.Parameters.AddWithValue("@pid", projectId);
+            staleCmd.ExecuteNonQuery();
+        }
 
         var scanId = GetLastId();
         var project = GetProject(projectId);
@@ -1173,6 +1305,72 @@ public sealed class SqliteStore : IResultStore, IDisposable
         var edges = GetGraphEdges(selectedIds, projectId);
 
         return new GraphData { Nodes = nodes, Edges = edges };
+    }
+
+    /// <summary>All active nodes for a project (capped), used by the architecture
+    /// bundle to build the directory/class/module picture.</summary>
+    public List<GraphNode> GetProjectNodes(long projectId, int cap = 20000)
+    {
+        var ids = new HashSet<long>();
+        using (var cmd = _conn.CreateCommand())
+        {
+            cmd.CommandText = "SELECT id FROM graph_nodes WHERE project_id = @pid AND state = 'active' ORDER BY curated DESC, last_seen_scan DESC LIMIT @cap";
+            cmd.Parameters.AddWithValue("@pid", projectId);
+            cmd.Parameters.AddWithValue("@cap", cap);
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read()) ids.Add(reader.GetInt64(0));
+        }
+        return GetGraphNodes(ids);
+    }
+
+    /// <summary>Active edges of the given kinds for a project (capped, ranked
+    /// curated/weight first). Used by the architecture bundle so that the
+    /// architecture-relevant relations (imports, inherits, uses_type, creates,
+    /// mentions) are never starved by high-volume kinds like contains/has_comment.</summary>
+    public List<GraphEdge> GetProjectEdgesByKinds(long projectId, IReadOnlyCollection<string> kinds, int cap = 20000)
+    {
+        var edges = new List<GraphEdge>();
+        if (kinds.Count == 0) return edges;
+
+        using var cmd = _conn.CreateCommand();
+        var kindList = kinds.ToList();
+        var placeholders = string.Join(",", Enumerable.Range(0, kindList.Count).Select(i => $"@k{i}"));
+        cmd.CommandText = $"""
+            SELECT id, last_seen_scan, from_node_id, to_node_id, kind, label, weight
+            FROM graph_edges
+            WHERE project_id = @pid AND state = 'active' AND kind IN ({placeholders})
+            ORDER BY curated DESC, weight DESC, last_seen_scan DESC
+            LIMIT @cap
+            """;
+        cmd.Parameters.AddWithValue("@pid", projectId);
+        cmd.Parameters.AddWithValue("@cap", cap);
+        for (int i = 0; i < kindList.Count; i++)
+            cmd.Parameters.AddWithValue($"@k{i}", kindList[i]);
+
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            edges.Add(new GraphEdge
+            {
+                Id = reader.GetInt64(0),
+                ScanId = reader.IsDBNull(1) ? 0 : reader.GetInt64(1),
+                From = reader.GetInt64(2),
+                To = reader.GetInt64(3),
+                Kind = reader.GetString(4),
+                Label = reader.IsDBNull(5) ? "" : reader.GetString(5),
+                Weight = reader.IsDBNull(6) ? 1 : reader.GetInt32(6)
+            });
+        }
+        return edges;
+    }
+
+    /// <summary>Count of active edges for a project (all kinds), for bundle stats.</summary>
+    public int CountProjectEdges(long projectId)
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM graph_edges WHERE project_id = @pid AND state = 'active'";
+        cmd.Parameters.AddWithValue("@pid", projectId);
+        return Convert.ToInt32(cmd.ExecuteScalar() ?? 0);
     }
 
     public GraphData QueryGraph(string query, long? projectId = null, int depth = 0, int limit = 80)
@@ -1955,6 +2153,23 @@ public sealed class ProjectInfo
     public int DirCount { get; init; }
     public long TotalSize { get; init; }
     public string? AddInfo { get; init; }
+    // Architecture-analysis lifecycle: null/'none' (not analyzed), 'analyzed', or 'stale'.
+    public string? AnalysisState { get; init; }
+}
+
+/// <summary>A project's persisted architecture analysis (produced by the AI-outside
+/// `arch` flow and rendered by the web Architecture View). <see cref="State"/> mirrors
+/// the project's analysis_state so the viewer can flag a 'stale' (rescanned) diagram.</summary>
+public sealed class ArchitectureAnalysis
+{
+    public long ProjectId { get; init; }
+    public string Format { get; init; } = "mermaid";
+    public required string Diagram { get; init; }
+    public string? Summary { get; init; }
+    public string? Layers { get; init; }
+    public required string AnalyzedAt { get; init; }
+    public long? SourceScan { get; init; }
+    public string? State { get; init; }
 }
 
 public sealed class ScanInfo
