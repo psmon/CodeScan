@@ -157,8 +157,12 @@ public static class GuiCommand
         }
     }
 
-    private static ResponsePayload HandleRequest(string path, Dictionary<string, string> queryString)
+    internal static ResponsePayload HandleRequest(
+        string path,
+        Dictionary<string, string> queryString,
+        string? dbPath = null)
     {
+        dbPath ??= AppPaths.DbPath;
         if (path == "/")
             return HtmlResponse(Html);
 
@@ -174,7 +178,7 @@ public static class GuiCommand
             var type = EmptyToNull(queryString.GetValueOrDefault("type"));
             var limit = ParseInt(queryString.GetValueOrDefault("limit"), 50);
             var projectId = ParseLong(queryString.GetValueOrDefault("project"));
-            using var db = new SqliteStore(AppPaths.DbPath);
+            using var db = new SqliteStore(dbPath);
             var results = db.Search(query, type, limit, projectId);
             return JsonResponse(new SearchApiResponse { Results = results });
         }
@@ -185,7 +189,7 @@ public static class GuiCommand
             var depth = ParseInt(queryString.GetValueOrDefault("depth"), 1);
             var limit = ParseInt(queryString.GetValueOrDefault("limit"), 100);
             var projectId = ParseLong(queryString.GetValueOrDefault("project"));
-            using var db = new SqliteStore(AppPaths.DbPath);
+            using var db = new SqliteStore(dbPath);
             return JsonResponse(db.SearchGraph(query, projectId, depth, limit));
         }
 
@@ -195,7 +199,7 @@ public static class GuiCommand
             var depth = ParseInt(queryString.GetValueOrDefault("depth"), 0);
             var limit = ParseInt(queryString.GetValueOrDefault("limit"), 100);
             var projectId = ParseLong(queryString.GetValueOrDefault("project"));
-            using var db = new SqliteStore(AppPaths.DbPath);
+            using var db = new SqliteStore(dbPath);
             try
             {
                 return JsonResponse(db.QueryGraph(query, projectId, depth, limit));
@@ -209,7 +213,7 @@ public static class GuiCommand
         if (path == "/api/projects")
         {
             var analyzedOnly = queryString.GetValueOrDefault("analyzed") == "1";
-            using var db = new SqliteStore(AppPaths.DbPath);
+            using var db = new SqliteStore(dbPath);
             var projects = analyzedOnly ? db.GetAnalyzedProjects() : db.GetProjects();
             return JsonResponse(new ProjectsApiResponse { Projects = projects });
         }
@@ -219,7 +223,7 @@ public static class GuiCommand
             var projectId = ParseLong(queryString.GetValueOrDefault("project"));
             if (projectId is null)
                 return new ResponsePayload(400, "Bad Request", "text/plain; charset=utf-8", "project is required.");
-            using var db = new SqliteStore(AppPaths.DbPath);
+            using var db = new SqliteStore(dbPath);
             var arch = db.GetArchitecture(projectId.Value);
             if (arch is null)
                 return new ResponsePayload(404, "Not Found", "text/plain; charset=utf-8", "no architecture analysis for this project.");
@@ -236,7 +240,7 @@ public static class GuiCommand
         }
 
         if (path == "/api/file")
-            return ReadFile(queryString.GetValueOrDefault("path") ?? "", ParseLong(queryString.GetValueOrDefault("project")));
+            return ReadFile(queryString.GetValueOrDefault("path") ?? "", ParseLong(queryString.GetValueOrDefault("project")), dbPath);
 
         return new ResponsePayload(404, "Not Found", "text/plain; charset=utf-8", "Not found");
     }
@@ -245,12 +249,12 @@ public static class GuiCommand
     // stores relationships; this resolves the node's relative path against its
     // project's absolute root_path and reads the file, guarding against path
     // traversal outside the project and capping the size.
-    private static ResponsePayload ReadFile(string relativePath, long? projectId)
+    private static ResponsePayload ReadFile(string relativePath, long? projectId, string dbPath)
     {
         if (string.IsNullOrWhiteSpace(relativePath) || projectId is null)
             return new ResponsePayload(400, "Bad Request", "text/plain; charset=utf-8", "project and path are required.");
 
-        using var db = new SqliteStore(AppPaths.DbPath);
+        using var db = new SqliteStore(dbPath);
         var project = db.GetProject(projectId.Value);
         if (project is null)
             return new ResponsePayload(404, "Not Found", "text/plain; charset=utf-8", "project not found.");
@@ -376,7 +380,7 @@ public static class GuiCommand
         stream.Write(bytes);
     }
 
-    private sealed record ResponsePayload(int StatusCode, string StatusText, string ContentType, string Body);
+    internal sealed record ResponsePayload(int StatusCode, string StatusText, string ContentType, string Body);
 
     internal sealed class SearchApiResponse
     {

@@ -1,4 +1,5 @@
 using System.Reflection;
+using CodeScan.Cli;
 using CodeScan.Commands;
 using CodeScan.Services;
 using CodeScan.Tui;
@@ -24,7 +25,9 @@ class Program
             return 0;
         }
 
-        var globalArgs = ParseGlobalOptions(args, out var remaining);
+        var globalParse = CliParser.ParseGlobal(args);
+        var globalArgs = globalParse.Options;
+        var remaining = globalParse.Remaining;
 
         if (globalArgs.ShowHelp && remaining.Length == 0)
         {
@@ -92,51 +95,14 @@ class Program
 
     static int RunScan(string[] args, GlobalOptions global)
     {
-        if (global.ShowHelp || (args.Length > 0 && args[0] is "-h" or "--help"))
+        var parsed = CliParser.ParseScan(args);
+        if (global.ShowHelp || parsed.Help)
         {
             PrintScanHelp();
             return 0;
         }
-
-        // scan = list --detail --tree --stats (defaults applied)
-        var scanArgs = new List<string>();
-        string? path = null;
-
-        for (int i = 0; i < args.Length; i++)
-        {
-            switch (args[i])
-            {
-                case "-i" or "--include" when i + 1 < args.Length:
-                    scanArgs.Add(args[i]);
-                    scanArgs.Add(args[++i]);
-                    break;
-                case "-e" or "--exclude" when i + 1 < args.Length:
-                    scanArgs.Add(args[i]);
-                    scanArgs.Add(args[++i]);
-                    break;
-                case "-d" or "--depth" when i + 1 < args.Length:
-                    scanArgs.Add(args[i]);
-                    scanArgs.Add(args[++i]);
-                    break;
-                default:
-                    if (!args[i].StartsWith('-') && path == null)
-                        path = args[i];
-                    else
-                        scanArgs.Add(args[i]);
-                    break;
-            }
-        }
-
-        // Default path: current directory
-        path ??= ".";
-        scanArgs.Insert(0, path);
-
-        // Always enable --detail --tree --stats for scan
-        if (!scanArgs.Contains("--detail")) scanArgs.Add("--detail");
-        if (!scanArgs.Contains("--tree")) scanArgs.Add("--tree");
-        if (!scanArgs.Contains("-s") && !scanArgs.Contains("--stats")) scanArgs.Add("--stats");
-
-        return RunList(scanArgs.ToArray(), global);
+        if (!parsed.IsSuccess) return PrintParseError(parsed.Error!, "codescan scan [path] [options]");
+        return RunList(parsed.Value!.ForwardedArguments, global);
     }
 
     static int RunList(string[] args, GlobalOptions global)
@@ -147,57 +113,14 @@ class Program
             return 0;
         }
 
-        var options = new ListOptions();
-        string? path = null;
-
-        for (int i = 0; i < args.Length; i++)
+        var parsed = CliParser.ParseList(args);
+        if (parsed.Help)
         {
-            switch (args[i])
-            {
-                case "-h" or "--help":
-                    PrintListHelp();
-                    return 0;
-                case "-i" or "--include" when i + 1 < args.Length:
-                    options.Include = [.. args[++i].Split(',', StringSplitOptions.RemoveEmptyEntries)];
-                    break;
-                case "-e" or "--exclude" when i + 1 < args.Length:
-                    options.Exclude = [.. args[++i].Split(',', StringSplitOptions.RemoveEmptyEntries)];
-                    break;
-                case "-d" or "--depth" when i + 1 < args.Length:
-                    if (int.TryParse(args[++i], out var depth))
-                        options.Depth = depth;
-                    break;
-                case "--tree":
-                    options.Tree = true;
-                    break;
-                case "-s" or "--stats":
-                    options.Stats = true;
-                    break;
-                case "--detail":
-                    options.Detail = true;
-                    break;
-                case "--full" or "--rebuild":
-                    options.FullRebuild = true;
-                    break;
-                case "--mode" when i + 1 < args.Length:
-                    options.FullRebuild = args[++i].Equals("full", StringComparison.OrdinalIgnoreCase);
-                    break;
-                case "--incremental":
-                    options.FullRebuild = false;
-                    break;
-                default:
-                    if (!args[i].StartsWith('-') && path == null)
-                        path = args[i];
-                    break;
-            }
+            PrintListHelp();
+            return 0;
         }
-
-        if (path == null)
-        {
-            Console.Error.WriteLine("Error: path is required.");
-            Console.Error.WriteLine("Usage: codescan list <path> [options]");
-            return 1;
-        }
+        if (!parsed.IsSuccess) return PrintParseError(parsed.Error!, "codescan list <path> [options]");
+        var (path, options) = parsed.Value!;
 
         IResultStore? store = null;
         if (global.DevMode)
@@ -214,51 +137,14 @@ class Program
 
     static int RunSearch(string[] args)
     {
-        string? query = null;
-        var options = new SearchOptions();
-
-        for (int i = 0; i < args.Length; i++)
+        var parsed = CliParser.ParseSearch(args);
+        if (parsed.Help)
         {
-            switch (args[i])
-            {
-                case "-t" or "--type" when i + 1 < args.Length:
-                    options.Type = args[++i];
-                    break;
-                case "-l" or "--limit" when i + 1 < args.Length:
-                    if (int.TryParse(args[++i], out var lim))
-                        options.Limit = lim;
-                    break;
-                case "-p" or "--project" when i + 1 < args.Length:
-                    if (long.TryParse(args[++i], out var pid))
-                        options.ProjectId = pid;
-                    break;
-                case "--graph":
-                    options.Graph = true;
-                    break;
-                case "--query" or "--cypher":
-                    options.Graph = true;
-                    options.GraphQuery = true;
-                    break;
-                case "--depth" when i + 1 < args.Length:
-                    if (int.TryParse(args[++i], out var depth))
-                        options.GraphDepth = depth;
-                    break;
-                case "-h" or "--help":
-                    PrintSearchHelp();
-                    return 0;
-                default:
-                    if (!args[i].StartsWith('-') && query == null)
-                        query = args[i];
-                    break;
-            }
+            PrintSearchHelp();
+            return 0;
         }
-
-        if (query == null)
-        {
-            Console.Error.WriteLine("Error: search query is required.");
-            Console.Error.WriteLine("Usage: codescan search <query> [options]");
-            return 1;
-        }
+        if (!parsed.IsSuccess) return PrintParseError(parsed.Error!, "codescan search <query> [options]");
+        var (query, options) = parsed.Value!;
 
         using var db = OpenDb();
         var cmd = new SearchCommand(db);
@@ -267,34 +153,10 @@ class Program
 
     static int RunGraph(string[] args)
     {
-        string query = "";
-        var options = new GraphOptions();
-
-        for (int i = 0; i < args.Length; i++)
-        {
-            switch (args[i])
-            {
-                case "-l" or "--limit" when i + 1 < args.Length:
-                    if (int.TryParse(args[++i], out var lim))
-                        options.Limit = lim;
-                    break;
-                case "-p" or "--project" when i + 1 < args.Length:
-                    if (long.TryParse(args[++i], out var pid))
-                        options.ProjectId = pid;
-                    break;
-                case "-d" or "--depth" when i + 1 < args.Length:
-                    if (int.TryParse(args[++i], out var depth))
-                        options.Depth = depth;
-                    break;
-                case "-h" or "--help":
-                    PrintGraphHelp();
-                    return 0;
-                default:
-                    if (!args[i].StartsWith('-') && string.IsNullOrEmpty(query))
-                        query = args[i];
-                    break;
-            }
-        }
+        var parsed = CliParser.ParseGraph(args, queryRequired: false);
+        if (parsed.Help) { PrintGraphHelp(); return 0; }
+        if (!parsed.IsSuccess) return PrintParseError(parsed.Error!, "codescan graph [query] [options]");
+        var (query, options) = parsed.Value!;
 
         using var db = OpenDb();
         var cmd = new GraphCommand(db);
@@ -303,41 +165,10 @@ class Program
 
     static int RunGraphQuery(string[] args)
     {
-        string query = "";
-        var options = new GraphOptions();
-
-        for (int i = 0; i < args.Length; i++)
-        {
-            switch (args[i])
-            {
-                case "-l" or "--limit" when i + 1 < args.Length:
-                    if (int.TryParse(args[++i], out var lim))
-                        options.Limit = lim;
-                    break;
-                case "-p" or "--project" when i + 1 < args.Length:
-                    if (long.TryParse(args[++i], out var pid))
-                        options.ProjectId = pid;
-                    break;
-                case "-d" or "--depth" when i + 1 < args.Length:
-                    if (int.TryParse(args[++i], out var depth))
-                        options.Depth = depth;
-                    break;
-                case "-h" or "--help":
-                    PrintGraphQueryHelp();
-                    return 0;
-                default:
-                    if (!args[i].StartsWith('-') && string.IsNullOrEmpty(query))
-                        query = args[i];
-                    break;
-            }
-        }
-
-        if (string.IsNullOrWhiteSpace(query))
-        {
-            Console.Error.WriteLine("Error: graph query is required.");
-            Console.Error.WriteLine("Usage: codescan query \"MATCH (n:class) WHERE n.label CONTAINS 'HttpClient' LIMIT 20\"");
-            return 1;
-        }
+        var parsed = CliParser.ParseGraph(args, queryRequired: true);
+        if (parsed.Help) { PrintGraphQueryHelp(); return 0; }
+        if (!parsed.IsSuccess) return PrintParseError(parsed.Error!, "codescan query \"MATCH (...)\"");
+        var (query, options) = parsed.Value!;
 
         using var db = OpenDb();
         var cmd = new GraphCommand(db);
@@ -551,37 +382,11 @@ class Program
         return 1;
     }
 
-    static GlobalOptions ParseGlobalOptions(string[] args, out string[] remaining)
+    static int PrintParseError(string error, string usage)
     {
-        var global = new GlobalOptions();
-        var rest = new List<string>();
-        bool commandFound = false;
-
-        for (int i = 0; i < args.Length; i++)
-        {
-            // Once a command word is found, pass everything else through
-            if (commandFound)
-            {
-                rest.Add(args[i]);
-                continue;
-            }
-
-            switch (args[i])
-            {
-                case "-h" or "--help": global.ShowHelp = true; break;
-                case "-v" or "--version": global.ShowVersion = true; break;
-                case "--verbose": global.Verbose = true; break;
-                case "--devmode": global.DevMode = true; break;
-                default:
-                    rest.Add(args[i]);
-                    if (!args[i].StartsWith('-'))
-                        commandFound = true;
-                    break;
-            }
-        }
-
-        remaining = rest.ToArray();
-        return global;
+        Console.Error.WriteLine($"Error: {error}");
+        Console.Error.WriteLine($"Usage: {usage}");
+        return 1;
     }
 
     static void PrintHelp()
