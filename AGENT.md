@@ -14,6 +14,7 @@ For everything — architecture, build & test, CLI commands, the graph model
 decisions — see:
 
 - **[CLAUDE.md](CLAUDE.md)** — project guidance (canonical source of truth)
+- **[AGENTS.md](AGENTS.md)** — agent entry point + harness layer metadata
 - **[README.md](README.md)** / **[README-KO.md](README-KO.md)** — features & usage
 - **[harness/knowledge/graph-reconciliation.md](harness/knowledge/graph-reconciliation.md)** — graph reconcile & query model
 - **[.claude/skills/testsample-build/SKILL.md](.claude/skills/testsample-build/SKILL.md)** — per-language build-artifact harvest
