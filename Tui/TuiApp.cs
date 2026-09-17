@@ -43,7 +43,8 @@ public class TuiApp
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool SetConsoleCP(uint wCodePageID);
 
-    public void Run()
+    /// <summary>Runs the TUI. Returns false if it terminated with a fatal error.</summary>
+    public bool Run()
     {
         try
         {
@@ -71,6 +72,7 @@ public class TuiApp
             Application.Run(main);
             main.Dispose();
             Application.Shutdown();
+            return true;
         }
         catch (Exception ex)
         {
@@ -82,13 +84,14 @@ public class TuiApp
 
             Console.Error.WriteLine($"TUI crashed. See {logPath}");
             Console.Error.WriteLine($"Error: {ex.Message}");
+            return false;
         }
     }
 }
 
 public class MainView : Toplevel
 {
-    private enum Mode { RootSelect, DirBrowse, ScanOptions, Scanning, Results, Projects, SearchInput, SearchResults, ProjectDetail }
+    private enum Mode { RootSelect, DirBrowse, ScanOptions, Scanning, Results, Projects, SearchInput, SearchResults, ProjectDetail, Help }
 
     private Mode _mode = Mode.RootSelect;
     private string _currentPath = "";
@@ -439,8 +442,24 @@ public class MainView : Toplevel
         return false;
     }
 
+    private static bool IsHelpKey(Key key)
+    {
+        if (key == Key.F1) return true;
+        // '?' is Shift+/ on most layouts, so match the produced rune rather than
+        // a bare key code - the code alone misses it once Shift is attached.
+        if (key.AsRune.Value == '?') return true;
+        if ((KeyCode)key == (KeyCode)'?') return true;
+        return false;
+    }
+
     private void OnGlobalKeyDown(object? sender, Key key)
     {
+        // Application.KeyDown is global: it also fires while a modal dialog owns
+        // the screen. Acting on those keys moved the *background* screen behind
+        // the dialog (Q), and swallowing Esc left the dialog with no cancel key.
+        // While anything other than this view is on top, stay out of the way.
+        if (!ReferenceEquals(Application.Top, this)) return;
+
         // block ESC completely - prevent accidental exit
         if (key == Key.Esc)
         {
@@ -453,7 +472,12 @@ public class MainView : Toplevel
             _txtSearch.HasFocus || _txtType.HasFocus ||
             _txtAddInfo.HasFocus || _txtUpdatePath.HasFocus) return;
 
-        if (IsQKey(key))
+        if (IsHelpKey(key) && _mode != Mode.Scanning && _mode != Mode.Help)
+        {
+            key.Handled = true;
+            ShowHelp();
+        }
+        else if (IsQKey(key))
         {
             key.Handled = true;
             HandleBack();
@@ -519,6 +543,113 @@ public class MainView : Toplevel
 
             case Mode.ProjectDetail:
                 ShowProjects();
+                break;
+
+            case Mode.Help:
+                RestoreFromHelp();
+                break;
+        }
+    }
+
+    // ========================
+    // Help (F1 / ?)
+    // ========================
+    private const string HelpText = """
+        KEYS
+          Enter        Activate the selected row or the focused button
+          Tab          Move focus between controls
+          Up / Down    Move the selection, or scroll a result view
+          Q            Back one screen (exits from the root screen)
+          H            Jump to the root screen
+          F1 or ?      This help
+          Esc          Ignored, so it cannot drop you out by accident.
+                       Inside a confirmation dialog Esc does cancel.
+
+          Q and H also answer to the Korean keys on the same caps (ㅂ / ㅎ).
+          The mouse is disabled by design - every action has a key.
+
+        SCREENS
+          Root           Pick a drive, or jump to Search / Projects.
+          Browse         Walk directories. Dot-folders, bin, obj, node_modules,
+                         dist, build, .next and __pycache__ are marked excluded.
+                         ">> SCAN THIS DIRECTORY <<" opens the scan options.
+          Scan Options   tree / detail / stats / full, plus include, exclude and
+                         depth filters. Enter starts the scan from anywhere on
+                         the screen; Q cancels a scan in progress.
+          Search         Enter runs a keyword search. Tab reaches the Graph
+                         Search and Query buttons. The type filter accepts
+                         method, file, doc, doc-meta, heading, comment, commit.
+          Projects       Every indexed project. Enter opens its detail.
+          Detail         Add description, update path, git-pull rescan, doc
+                         orphans, and delete the project.
+
+        ADDING A PROJECT
+          Scanning a directory registers it, exactly like `codescan scan <path>`:
+          the same files, methods, comments, search rows and graph nodes/edges.
+          Re-scanning an existing project reconciles it in place.
+
+        DELETING A PROJECT
+          Detail -> [Delete Project] asks to confirm, then removes every DB row
+          for that project: scans, files, methods, comments, docs, graph
+          nodes/edges, search index and architecture analysis. Source files on
+          disk are never touched, so a rescan rebuilds the index.
+
+        DATA
+          DB    ~/.codescan/db/codescan-v2.db
+          Logs  ~/.codescan/logs/   (a TUI scan always writes one)
+        """;
+
+    private Mode _modeBeforeHelp = Mode.RootSelect;
+    private string _titleBeforeHelp = "";
+    private string _pathBeforeHelp = "";
+    private string _hintBeforeHelp = "";
+    private string _resultTextBeforeHelp = "";
+    private bool _listVisibleBeforeHelp;
+
+    private void ShowHelp()
+    {
+        _modeBeforeHelp = _mode;
+        _titleBeforeHelp = _titleLabel.Text?.ToString() ?? "";
+        _pathBeforeHelp = _pathLabel.Text?.ToString() ?? "";
+        _hintBeforeHelp = _hintLabel.Text?.ToString() ?? "";
+        _listVisibleBeforeHelp = _listView.Visible;
+        _resultTextBeforeHelp = _resultView.Text?.ToString() ?? "";
+
+        _mode = Mode.Help;
+        _titleLabel.Text = "CodeScan TUI - Help";
+        _pathLabel.Text = "Press Q to go back to where you were";
+        _hintLabel.Text = "[Q] Back  [H] Home  [Up/Down] Scroll";
+
+        HideOptions();
+        _listView.Visible = false;
+        _resultView.Visible = true;
+        _resultView.Text = HelpText;
+        _resultView.MoveHome();
+        _resultView.SetFocus();
+    }
+
+    private void RestoreFromHelp()
+    {
+        switch (_modeBeforeHelp)
+        {
+            case Mode.RootSelect: ShowRootSelect(); break;
+            case Mode.DirBrowse: ShowDirBrowse(_currentPath); break;
+            case Mode.ScanOptions: ShowScanOptions(); break;
+            case Mode.Projects: ShowProjects(); break;
+            case Mode.ProjectDetail: ShowProjectDetail(_currentProjectId); break;
+            case Mode.SearchInput: ShowSearchInput(); break;
+            default:
+                // Results / SearchResults: put the previous output back verbatim
+                _mode = _modeBeforeHelp;
+                _titleLabel.Text = _titleBeforeHelp;
+                _pathLabel.Text = _pathBeforeHelp;
+                _hintLabel.Text = _hintBeforeHelp;
+                HideOptions();
+                _listView.Visible = _listVisibleBeforeHelp;
+                _resultView.Visible = !_listVisibleBeforeHelp;
+                _resultView.Text = _resultTextBeforeHelp;
+                _resultView.MoveHome();
+                if (_listView.Visible) _listView.SetFocus(); else _resultView.SetFocus();
                 break;
         }
     }
@@ -819,7 +950,8 @@ public class MainView : Toplevel
         _mode = Mode.SearchInput;
         _titleLabel.Text = "Search Indexed Data";
         _pathLabel.Text = "Keyword, graph search, or MATCH graph query";
-        _hintLabel.Text = "[Enter] Keyword Search  [Tab] Graph Search  [Query] MATCH syntax  [Q] Back  [H] Home";
+        // Tab moves focus; it does not itself run a graph search. Say so.
+        _hintLabel.Text = "[Enter] Keyword Search  [Tab] Focus Graph Search / Query  [Q] Back  [F1] Help";
 
         _listView.Visible = false;
         _resultView.Visible = false;
@@ -830,6 +962,7 @@ public class MainView : Toplevel
         _lblType.Visible = true;
         _txtType.Visible = true;
         _btnSearch.Visible = true;
+        _btnSearch.IsDefault = true;    // hint bar promises [Enter] Keyword Search
         _btnGraphSearch.Visible = true;
         _btnGraphQuery.Visible = true;
 
@@ -1062,7 +1195,7 @@ public class MainView : Toplevel
         _mode = Mode.Projects;
         _titleLabel.Text = "Indexed Projects";
         _pathLabel.Text = "Projects that have been scanned and indexed";
-        _hintLabel.Text = "[Enter] View detail  [Q] Back  [H] Home";
+        _hintLabel.Text = "[Enter] View detail  [Q] Back  [H] Home  [F1] Help";
 
         try
         {
@@ -1160,7 +1293,7 @@ public class MainView : Toplevel
 
             _titleLabel.Text = $"Project #{projectId} Detail";
             _pathLabel.Text = project.RootPath;
-            _hintLabel.Text = "[Enter] Select action  [Q] Back  [H] Home";
+            _hintLabel.Text = "[Enter] Select action  [Q] Back  [H] Home  [F1] Help";
 
             _listItems.Clear();
             _dirEntries.Clear();
@@ -1256,7 +1389,7 @@ public class MainView : Toplevel
     {
         _titleLabel.Text = $"Add Description - Project #{_currentProjectId}";
         _pathLabel.Text = "Enter a description for this project";
-        _hintLabel.Text = "[Enter] Save  [Q] Back";
+        _hintLabel.Text = "[Enter] Save  [Q] Back  [F1] Help";
 
         _listView.Visible = false;
         _resultView.Visible = false;
@@ -1274,6 +1407,7 @@ public class MainView : Toplevel
         _lblAddInfo.Visible = true;
         _txtAddInfo.Visible = true;
         _btnAddInfo.Visible = true;
+        _btnAddInfo.IsDefault = true;   // hint bar promises [Enter] Save
 
         _txtAddInfo.SetFocus();
     }
@@ -1307,7 +1441,7 @@ public class MainView : Toplevel
     {
         _titleLabel.Text = $"Update Path - Project #{_currentProjectId}";
         _pathLabel.Text = "Enter the new root path for this project";
-        _hintLabel.Text = "[Enter] Save  [Q] Back";
+        _hintLabel.Text = "[Enter] Save  [Q] Back  [F1] Help";
 
         _listView.Visible = false;
         _resultView.Visible = false;
@@ -1325,6 +1459,7 @@ public class MainView : Toplevel
         _lblUpdatePath.Visible = true;
         _txtUpdatePath.Visible = true;
         _btnUpdatePath.Visible = true;
+        _btnUpdatePath.IsDefault = true;   // hint bar promises [Enter] Save
 
         _txtUpdatePath.SetFocus();
     }
@@ -1425,14 +1560,15 @@ public class MainView : Toplevel
             var project = db.GetProject(_currentProjectId);
             if (project == null) return;
 
-            var result = MessageBox.Query(
+            var confirmed = Confirm(
                 "Delete Project",
                 $"Delete project #{_currentProjectId}?\n{project.RootPath}\n\nThis removes all scan data from DB.\nSource files on disk are NOT affected.",
                 "Delete", "Cancel");
 
-            if (result == 0) // Delete
+            if (confirmed)
             {
                 db.DeleteProject(_currentProjectId);
+                _currentProjectId = 0;
                 ShowProjects();
             }
         }
@@ -1440,6 +1576,60 @@ public class MainView : Toplevel
         {
             _pathLabel.Text = $"Error: {ex.Message}";
         }
+    }
+
+    /// <summary>
+    /// Yes/no confirmation dialog. Hand-rolled rather than MessageBox.Query: the
+    /// latter's buttons raise Accepting on Enter/Space but Query still reports
+    /// back -1 ("nothing clicked"), so a keyboard confirmation silently did
+    /// nothing - and this app disables the mouse, leaving no other way to
+    /// confirm. Wiring the buttons here keeps the outcome in our own hands.
+    /// Esc cancels (the global key handler stands down while a dialog is on top).
+    /// </summary>
+    private static bool Confirm(string title, string message, string acceptText, string cancelText)
+    {
+        var lines = message.Split('\n');
+        var width = Math.Clamp(lines.Max(l => l.Length) + 8, 40, 100);
+        var height = lines.Length + 6;
+
+        var accepted = false;
+        var dialog = new Dialog
+        {
+            Title = title,
+            Width = width,
+            Height = height
+        };
+
+        dialog.Add(new Label
+        {
+            Text = message,
+            X = 1, Y = 0,
+            Width = Dim.Fill(1),
+            Height = lines.Length
+        });
+
+        var btnAccept = new Button { Text = acceptText, IsDefault = true };
+        btnAccept.Accepting += (_, e) =>
+        {
+            accepted = true;
+            e.Cancel = true;          // handled here; do not bubble to the Dialog
+            Application.RequestStop();
+        };
+
+        var btnCancel = new Button { Text = cancelText };
+        btnCancel.Accepting += (_, e) =>
+        {
+            accepted = false;
+            e.Cancel = true;
+            Application.RequestStop();
+        };
+
+        dialog.AddButton(btnAccept);
+        dialog.AddButton(btnCancel);
+
+        Application.Run(dialog);
+        dialog.Dispose();
+        return accepted;
     }
 
     // ========================
@@ -1527,7 +1717,7 @@ public class MainView : Toplevel
         _mode = Mode.RootSelect;
         _titleLabel.Text = "Select Root Directory";
         _pathLabel.Text = "OS: " + (OperatingSystem.IsWindows() ? "Windows" : "Linux/macOS");
-        _hintLabel.Text = "[Enter] Select  [Q] Exit  [H] Home";
+        _hintLabel.Text = "[Enter] Select  [Q] Exit  [H] Home  [F1] Help";
 
         _listItems.Clear();
         _dirEntries.Clear();
@@ -1580,7 +1770,7 @@ public class MainView : Toplevel
         _mode = Mode.DirBrowse;
         _titleLabel.Text = "Browse Directory";
         _pathLabel.Text = path;
-        _hintLabel.Text = "[Enter] Select/Enter  [Q] Back  [H] Home";
+        _hintLabel.Text = "[Enter] Open  [Q] Back  [H] Home  [F1] Help";
 
         _listItems.Clear();
         _dirEntries.Clear();
@@ -1631,7 +1821,7 @@ public class MainView : Toplevel
         _mode = Mode.ScanOptions;
         _titleLabel.Text = "Scan Options";
         _pathLabel.Text = $"Target: {_currentPath}";
-        _hintLabel.Text = "[Tab] Navigate  [Enter] Run Scan  [Q] Back  [H] Home";
+        _hintLabel.Text = "[Tab] Navigate  [Enter] Run Scan  [Q] Back  [H] Home  [F1] Help";
 
         _listView.Visible = false;
         _resultView.Visible = false;
@@ -1647,6 +1837,7 @@ public class MainView : Toplevel
         _lblDepth.Visible = true;
         _txtDepth.Visible = true;
         _btnExecute.Visible = true;
+        _btnExecute.IsDefault = true;   // hint bar promises [Enter] Run Scan
 
         _chkTree.SetFocus();
     }
@@ -1684,6 +1875,13 @@ public class MainView : Toplevel
         _lblUpdatePath.Visible = false;
         _txtUpdatePath.Visible = false;
         _btnUpdatePath.Visible = false;
+
+        // Only the screen currently on show may own Enter; two IsDefault buttons
+        // in one view would race for it.
+        _btnExecute.IsDefault = false;
+        _btnSearch.IsDefault = false;
+        _btnAddInfo.IsDefault = false;
+        _btnUpdatePath.IsDefault = false;
     }
 
     private static bool IsDefaultExcluded(string dirName)

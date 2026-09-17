@@ -60,7 +60,7 @@ class Program
             "project-addinfo" => RunProjectAddInfo(commandArgs),
             "project-update" => RunProjectUpdate(commandArgs),
             "project-delete" => RunProjectDelete(commandArgs),
-            "tui" => RunTui(),
+            "tui" => RunTui(commandArgs),
             "semantic" => RunSemantic(commandArgs),
             "graph-edit" => RunGraphEdit(commandArgs),
             "doc-orphan" or "orphans" => RunDocOrphan(commandArgs),
@@ -504,11 +504,19 @@ class Program
         return cmd.Execute(projectId, force);
     }
 
-    static int RunTui()
+    static int RunTui(string[] args)
     {
+        // `--help` after the command word never reaches ParseGlobalOptions, so each
+        // command handles it itself. Without this, `codescan tui --help` launched
+        // the full-screen UI instead of printing help.
+        if (args.Any(a => a is "-h" or "--help"))
+        {
+            PrintTuiHelp();
+            return 0;
+        }
+
         var app = new TuiApp();
-        app.Run();
-        return 0;
+        return app.Run() ? 0 : 1;
     }
 
     static int RunHelp(string[] args)
@@ -533,7 +541,7 @@ class Program
             case "project-addinfo": PrintProjectAddInfoHelp(); break;
             case "project-update": PrintProjectUpdateHelp(); break;
             case "project-delete": PrintProjectDeleteHelp(); break;
-            case "tui": Console.WriteLine("  codescan tui - Interactive TUI mode."); break;
+            case "tui": PrintTuiHelp(); break;
             case "doc-orphan": case "orphans": DocOrphanCommand.PrintHelp(); break;
             case "arch": ArchCommand.PrintHelp(); break;
             default:
@@ -851,6 +859,55 @@ class Program
           codescan gui start
           codescan gui start --port 8090
           codescan gui stop
+        """);
+    }
+
+    static void PrintTuiHelp()
+    {
+        Console.WriteLine("""
+        codescan tui - Interactive TUI mode
+
+        Usage: codescan tui
+
+        A full-screen keyboard-driven front end for scanning, browsing indexed
+        projects, and searching. Mouse input is disabled by design - every action
+        has a key. Press F1 (or ?) inside the TUI for the same key list.
+
+        Keys (everywhere):
+          Enter        Activate the selected row / focused button
+          Tab          Move focus between controls
+          Up / Down    Move the selection
+          Q            Back one screen (exits from the root screen)
+          H            Jump to the root screen
+          F1, ?        Show the in-TUI help screen
+          Esc          Ignored, so it cannot drop you out of the app by accident
+                       (inside a confirmation dialog Esc does cancel)
+
+        Screens:
+          Root           Pick a drive, or jump to Search / Projects
+          Browse         Walk directories; ">> SCAN THIS DIRECTORY <<" opens options
+          Scan Options   Toggle tree/detail/stats/full, set include/exclude/depth,
+                         then Enter (or Tab to ">>> Run Scan <<<") to start
+          Search         Keyword search, graph search, or a Cypher-like MATCH query
+          Projects       Every indexed project; Enter opens its detail
+          Detail         Add description, update path, git-pull rescan, doc-orphans,
+                         and delete the project from the DB
+
+        Adding and removing projects:
+          Scanning a directory registers it as a project, exactly like
+          `codescan scan <path>` - same files, methods, comments and graph rows.
+          [Delete Project] removes every DB row for that project (scans, files,
+          methods, comments, docs, graph nodes/edges, search index, architecture
+          analysis). Source files on disk are never touched, and a rescan
+          rebuilds the index.
+
+        Notes:
+          A TUI scan always writes a log to ~/.codescan/logs/ (the CLI writes one
+          only with --devmode). Crashes are appended to ~/.codescan/logs/tui-crash.log
+          and make the command exit non-zero.
+
+        Examples:
+          codescan tui
         """);
     }
 
